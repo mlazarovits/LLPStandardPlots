@@ -152,7 +152,7 @@ class Plotter1D(PlotterBase):
         legend.Draw()
         canvas.SetLogy()
         # Use common CMS label drawing, optimized for 1D
-        self.style.draw_cms_labels(cms_x=0.16, cms_y=self.style.cms_y_pos, prelim_x=0.26, lumi_x=0.9, cms_text_size_mult=1.1)
+        self.style.draw_cms_labels(cms_x=0.16, cms_y=self.style.cms_y_pos, prelim_x=0.248, lumi_x=0.9, cms_text_size_mult=1.)
         
         # Draw Region Label
         self._draw_region_label(canvas, final_state_label, plot_type="1d")
@@ -216,7 +216,7 @@ class Plotter1D(PlotterBase):
         legend.Draw()
         canvas.SetLogy()
         # Use common CMS label drawing, optimized for 1D
-        self.style.draw_cms_labels(cms_x=0.16, cms_y=self.style.cms_y_pos, prelim_x=0.26, lumi_x=0.9, cms_text_size_mult=1.1)
+        self.style.draw_cms_labels(cms_x=0.16, cms_y=self.style.cms_y_pos, prelim_x=0.248, lumi_x=0.9, cms_text_size_mult=1.)
         
         # Draw Region Label
         self._draw_region_label(canvas, final_state_label, plot_type="1d")
@@ -298,7 +298,7 @@ class Plotter2D(PlotterBase):
         # Use common CMS label drawing, using default positions
         self.style.draw_cms_labels()
         self.style.draw_process_label(sample_label, x_pos=sample_label_x_pos, y_pos=0.87)
-        self._draw_region_label(canvas, final_state_label, x_pos=0.435, plot_type="2d")
+        self._draw_region_label(canvas, final_state_label, x_pos=0.425, plot_type="2d")
         
         canvas.Update() # Update after adding labels
         
@@ -401,7 +401,7 @@ class PlotterDataMC(PlotterBase):
         # Create MC histograms
         mc_histograms = []
         for i, (filename, data) in enumerate(mc_collection.items()):
-            color = self.mc_colors[i % len(self.mc_colors)]
+            color = self._get_background_color_index(filename)
             
             # Use the correct weights for this specific variable
             mapped_var = self._map_var_name(var_name)
@@ -491,7 +491,7 @@ class PlotterDataMC(PlotterBase):
             data_hist.Draw("PEX0 SAME")
         
         # Create CMS legend
-        legend = CMS.cmsLeg(0.77, 0.5, 1., 0.9, textSize=0.045)
+        legend = CMS.cmsLeg(0.77, 0.4, 1., 0.9, textSize=0.05)
         
         if data_hist:
             legend.AddEntry(data_hist, "data", "lp")
@@ -577,6 +577,29 @@ class PlotterDataMC(PlotterBase):
         
         return canvas
     
+    def _get_background_color_index(self, filename):
+        """Get the color index for a specific background based on physics process."""
+        from src.utils import parse_background_name
+        
+        bg_name = parse_background_name(filename)
+        
+        # Background to color mapping (using original hex color indices)
+        # QCD=purple, WJets=teal, ZJets=yellow/gold, TTX=red/orange, GJets=pink/rose
+        background_color_map = {
+            'QCD multijets': 1179,        # #5A4484 - Purple
+            'W + jets': 1180,             # #347889 - Teal/Blue-green
+            'Z + jets': 1181,             # #F4B240 - Yellow/Gold
+            't#bar{t} + X': 1182,         # #E54B26 - Red/Orange
+            't#bar{t} + jets': 1182,      # #E54B26 - Red/Orange (same as TTX)
+            '#gamma + jets': 1183,        # #C05780 - Pink/Rose
+            # Assign remaining backgrounds to remaining colors
+            'Drell-Yan': 1184,            # #7A68A6 - Light purple
+            'Diboson': 1185,              # #2E8B57 - Sea green
+            'Single top': 1186,           # #8B4513 - Saddle brown
+        }
+        
+        return background_color_map.get(bg_name, 1179)  # Default to purple if not found
+
     def _ensure_mc_colors(self):
         """Force recreation of MC colors at specific indices to override palette interference."""
         # Define the hex colors and expected indices from rootlogon.C

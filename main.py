@@ -4,6 +4,8 @@ import sys
 import ROOT
 from pathlib import Path
 import cmsstyle as CMS
+import os
+import glob
 
 from src.style import StyleManager
 from src.loader import DataLoader
@@ -12,6 +14,49 @@ from src.selections import FinalStateResolver
 from src.utils import parse_signal_name, parse_background_name
 
 from src.config import AnalysisConfig
+
+def expand_input_paths(input_paths):
+    """
+    Expand input paths to handle both individual files and directories with ROOT files.
+    
+    Args:
+        input_paths: List of file paths and/or directory paths
+        
+    Returns:
+        List of ROOT file paths
+        
+    Raises:
+        FileNotFoundError: If a directory contains no ROOT files
+    """
+    expanded_paths = []
+    
+    for path_str in input_paths:
+        path = Path(path_str)
+        
+        if path.is_file():
+            # Individual file - add as is
+            expanded_paths.append(str(path))
+        elif path.is_dir():
+            # Directory - search for ROOT files
+            try:
+                root_files = list(path.glob("*.root"))
+                if not root_files:
+                    raise FileNotFoundError(f"No ROOT files found in directory: {path}")
+                
+                # Sort for consistent ordering
+                root_files.sort()
+                expanded_paths.extend([str(f) for f in root_files])
+                print(f"Found {len(root_files)} ROOT files in {path}")
+                
+            except Exception as e:
+                if isinstance(e, FileNotFoundError):
+                    raise
+                else:
+                    raise Exception(f"Error accessing directory {path}: {e}")
+        else:
+            raise FileNotFoundError(f"Path does not exist: {path}")
+    
+    return expanded_paths
 
 def prompt_unblind_warning():
     """
@@ -139,9 +184,9 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Standard Plots CLI')
     
     # Input Files
-    parser.add_argument('--signal', nargs='+', required=True, help='Signal ROOT files')
-    parser.add_argument('--background', nargs='+', required=True, help='Background ROOT files')
-    parser.add_argument('--data', nargs='*', help='Data ROOT files (for data/MC comparison plots)')
+    parser.add_argument('--signal', nargs='+', required=True, help='Signal ROOT files or directories containing ROOT files')
+    parser.add_argument('--background', nargs='+', required=True, help='Background ROOT files or directories containing ROOT files')
+    parser.add_argument('--data', nargs='*', help='Data ROOT files or directories containing ROOT files (for data/MC comparison plots)')
     parser.add_argument('--output', default='standard_plots.root', help='Output ROOT file')
     parser.add_argument('--tree', default='kuSkimTree', help='Tree name')
     
@@ -173,8 +218,17 @@ def parse_arguments():
 def main():
     args = parse_arguments()
     
+    # Expand input paths to handle directories
+    try:
+        signal_files = expand_input_paths(args.signal)
+        background_files = expand_input_paths(args.background)
+        data_files = expand_input_paths(args.data) if args.data else []
+    except (FileNotFoundError, Exception) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    
     # Handle unblinding warning if requested
-    if args.unblind and args.data:
+    if args.unblind and data_files:
         if not prompt_unblind_warning():
             print("Exiting...")
             return
@@ -219,13 +273,13 @@ def main():
     print(f"Loading data for {len(event_flags)} event flags and {len(custom_cuts)} custom cuts...")
     
     # Use unified loader to load everything in one pass
-    sig_data_map, custom_sig_data_map = loader.load_data_unified(args.signal, event_flags, custom_cuts)
-    bg_data_map, custom_bg_data_map = loader.load_data_unified(args.background, event_flags, custom_cuts)
+    sig_data_map, custom_sig_data_map = loader.load_data_unified(signal_files, event_flags, custom_cuts)
+    bg_data_map, custom_bg_data_map = loader.load_data_unified(background_files, event_flags, custom_cuts)
     
     # Load data files if provided
     data_data_map, custom_data_data_map = {}, {}
-    if args.data:
-        data_data_map, custom_data_data_map = loader.load_data_unified(args.data, event_flags, custom_cuts, is_data=True)
+    if data_files:
+        data_data_map, custom_data_data_map = loader.load_data_unified(data_files, event_flags, custom_cuts, is_data=True)
     
     # Output File (only for ROOT format)
     if use_root_file:
