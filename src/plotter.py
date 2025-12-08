@@ -282,7 +282,7 @@ class Plotter2D(PlotterBase):
         hist.GetXaxis().SetTitleSize(self.style.axis_title_size)
         hist.GetYaxis().SetTitleSize(self.style.axis_title_size)
         hist.GetZaxis().SetTitleSize(self.style.axis_title_size)
-        hist.GetXaxis().SetTitleOffset(1.1)
+        hist.GetXaxis().SetTitleOffset(1.25)
         hist.GetYaxis().SetTitleOffset(1.15)
         hist.GetZaxis().SetTitleOffset(1.3)
         hist.GetXaxis().SetLabelSize(self.style.axis_label_size)
@@ -457,19 +457,20 @@ class PlotterDataMC(PlotterBase):
         stack_max = stack.GetMaximum()
         max_val = max(data_max, stack_max)
         
-        if normalized:
-            # For normalized plots, use fixed range that works with log scale
-            stack.SetMinimum(2e-5)
-            stack.SetMaximum(max_val * 10)
-        else:
-            # For regular plots, use the original scaling
-            stack.SetMinimum(0.5)
-            stack.SetMaximum(max_val * 10)
-        
         # Draw stack and data with grid behind histograms
         stack.Draw("HIST")
         pad1.RedrawAxis("G")  # Draw grid lines behind everything  
         stack.Draw("HIST SAME")  # Redraw histogram content on top of grid
+        
+        # Set axis ranges after all drawing is complete
+        if normalized:
+            # For normalized plots, use fixed range that works with log scale
+            stack.SetMaximum(max_val * 5.)
+            stack.SetMinimum(2e-4)
+            stack.GetHistogram().GetYaxis().SetRangeUser(2e-4, max_val * 5.)
+        else:
+            # For regular plots, use the original scaling
+            stack.GetHistogram().GetYaxis().SetRangeUser(0.5, max_val * 10)
         stack.GetXaxis().SetLabelSize(0)
         
         # Set y-axis title based on normalization
@@ -487,6 +488,26 @@ class PlotterDataMC(PlotterBase):
         stack.GetYaxis().SetLabelSize(0.05)
         stack.GetYaxis().CenterTitle(True)
         
+        # Create and add MC uncertainty band (like unrolled_plotting)
+        mc_uncertainty = None
+        if mc_histograms:
+            # Get the sum of all MC histograms for uncertainty band
+            total_mc = mc_histograms[0][0].Clone("total_mc_for_uncertainty")
+            total_mc.Reset()
+            for mc_hist, _ in mc_histograms:
+                total_mc.Add(mc_hist)
+            
+            # Create and style MC uncertainty band
+            mc_uncertainty = total_mc.Clone("mc_uncertainty")
+            mc_uncertainty.SetFillStyle(3244)
+            ROOT.gStyle.SetHatchesLineWidth(1)
+            mc_uncertainty.SetFillColor(ROOT.kBlack)
+            mc_uncertainty.SetLineColor(ROOT.kBlack)
+            mc_uncertainty.SetLineWidth(1) 
+            mc_uncertainty.SetMarkerSize(0) 
+            mc_uncertainty.SetMarkerStyle(0)
+            mc_uncertainty.Draw("E2 SAME")  # E2 = error band only (no markers)
+        
         if data_hist:
             data_hist.Draw("PEX0 SAME")
         
@@ -495,6 +516,10 @@ class PlotterDataMC(PlotterBase):
         
         if data_hist:
             legend.AddEntry(data_hist, "data", "lp")
+        
+        # Add MC uncertainty band to legend (second after data)
+        if mc_uncertainty:
+            legend.AddEntry(mc_uncertainty, "total uncertainty", "f")
         
         # Add MC backgrounds to legend (reverse order for stacking)
         for mc_hist, bg_name in reversed(mc_histograms):
@@ -572,6 +597,7 @@ class PlotterDataMC(PlotterBase):
         canvas.pad2 = pad2
         canvas.stack = stack
         canvas.mc_histograms = mc_histograms
+        canvas.mc_uncertainty = mc_uncertainty
         canvas.data_hist = data_hist
         canvas.legend = legend
         

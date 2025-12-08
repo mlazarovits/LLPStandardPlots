@@ -210,8 +210,8 @@ def parse_arguments():
     parser.add_argument('--unblind', action='store_true', help='Bypass data blinding (shows data in all regions including signal regions)')
     
     # Output Format Options
-    parser.add_argument('--format', choices=['root', 'pdf', 'png'], default='root', 
-                       help='Output format: root (default), pdf, or png')
+    parser.add_argument('--format', choices=['root', 'pdf', 'png', 'eps'], default='root', 
+                       help='Output format: root (default), pdf, png, or eps')
     
     return parser.parse_args()
 

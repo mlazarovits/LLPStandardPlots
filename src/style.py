@@ -92,7 +92,9 @@ class StyleManager:
         lumi_label.SetTextSize(self.lumi_text_size * cms_text_size_mult)
         lumi_label.SetTextFont(42)
         lumi_label.SetTextAlign(31)  # Right-aligned
-        lumi_label.DrawLatex(lumi_x, lumi_y, f"{self.luminosity} fb^{{-1}} ({self.energy} TeV)")
+        # Format luminosity without decimal if it's a whole number
+        lumi_text = f"{self.luminosity:g}" if self.luminosity == int(self.luminosity) else f"{self.luminosity}"
+        lumi_label.DrawLatex(lumi_x, lumi_y, f"{lumi_text} fb^{{-1}} ({self.energy} TeV)")
 
     def draw_process_label(self, label_text, x_pos=0.65, y_pos=0.85, align=11):
         """Draw the process/sample label on the plot."""
@@ -128,7 +130,7 @@ class StyleManager:
                 ell_y_offset = -0.014
                 ell_size_offset = -0.013
             elif plot_type == "2d":
-                ell_x_offset = 0.13  # Slightly different for 2D layouts
+                ell_x_offset = 0.135 
                 ell_y_offset = -0.014
                 ell_size_offset = -0.013
             elif plot_type == "datamc":
