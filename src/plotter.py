@@ -537,6 +537,8 @@ class PlotterDataMC(PlotterBase):
             stack.GetHistogram().GetYaxis().SetRangeUser(2e-4, max_val * 5.)
         else:
             # For regular plots, use the original scaling
+            stack.SetMaximum(max_val * 10.)
+            stack.SetMinimum(0.5)
             stack.GetHistogram().GetYaxis().SetRangeUser(0.5, max_val * 10)
         stack.GetXaxis().SetLabelSize(0)
         
