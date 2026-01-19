@@ -107,6 +107,7 @@ class Plotter1D(PlotterBase):
         canvas.SetLeftMargin(self.style.margin_left+0.04)
         canvas.SetRightMargin(self.style.margin_right-0.02)
         return canvas
+    
 
     def plot_collection(self, data_collection, var_name, var_label, bins, x_min, x_max, collection_type="Signal", normalized=False, suffix="", final_state_label=None):
         """Creates a canvas with distributions from a collection of files (signals or backgrounds)."""
@@ -245,23 +246,7 @@ class Plotter2D(PlotterBase):
             
         return hist
 
-    def plot_2d(self, data, name, sample_label, final_state_label, sample_label_x_pos=0.65):
-        """Creates a CMS styled 2D plot."""
-        # Load ranges from config
-        ms_conf = AnalysisConfig.VARIABLES['rjr_Ms']
-        rs_conf = AnalysisConfig.VARIABLES['rjr_Rs']
-        
-        ms_min, ms_max = ms_conf['range']
-        rs_min, rs_max = rs_conf['range']
-        ms_label = ms_conf['label']
-        rs_label = rs_conf['label']
-        
-        hist = self.create_2d_histogram(data['rjr_Ms'], data['rjr_Rs'], data['weights'], 
-                                      ms_conf['bins'], ms_min, ms_max, 
-                                      rs_conf['bins'], rs_min, rs_max, name)
-        
-        canvas = CMS.cmsCanvas(name, ms_min, ms_max, rs_min, rs_max, ms_label, rs_label, 
-                              square=False, extraSpace=0.01, iPos=0, with_z_axis=True)
+    def plot_2d_baseFormat(self, hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65):
         canvas.SetLogz(True)
         canvas.SetGridx(True)
         canvas.SetGridy(True)
@@ -275,8 +260,8 @@ class Plotter2D(PlotterBase):
         # Set histogram formatting (restored from original)
         hist.SetStats(0)
         hist.SetTitle("")
-        hist.GetXaxis().SetTitle(ms_label)
-        hist.GetYaxis().SetTitle(rs_label)
+        hist.GetXaxis().SetTitle(axis_labels['x'])
+        hist.GetYaxis().SetTitle(axis_labels['y'])
         hist.GetZaxis().SetTitle("Events")
         hist.GetXaxis().CenterTitle(True)
         hist.GetYaxis().CenterTitle(True)
@@ -304,6 +289,56 @@ class Plotter2D(PlotterBase):
         
         canvas.Update() # Update after adding labels
         
+        return canvas, hist
+
+
+
+    def plot_2d(self, data, name, sample_label, final_state_label, sample_label_x_pos=0.65):
+        """Creates a CMS styled 2D plot."""
+        # Load ranges from config
+        ms_conf = AnalysisConfig.VARIABLES['rjr_Ms']
+        rs_conf = AnalysisConfig.VARIABLES['rjr_Rs']
+        
+        ms_min, ms_max = ms_conf['range']
+        rs_min, rs_max = rs_conf['range']
+        ms_label = ms_conf['label']
+        rs_label = rs_conf['label']
+        
+        hist = self.create_2d_histogram(data['rjr_Ms'], data['rjr_Rs'], data['weights'], 
+                                      ms_conf['bins'], ms_min, ms_max, 
+                                      rs_conf['bins'], rs_min, rs_max, name)
+        
+        canvas = CMS.cmsCanvas(name, ms_min, ms_max, rs_min, rs_max, ms_label, rs_label, 
+                              square=False, extraSpace=0.01, iPos=0, with_z_axis=True)
+        axis_labels = {}
+        axis_labels['x'] = ms_label
+        axis_labels['y'] = rs_label
+        self.plot_2d_baseFormat(hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=sample_label_x_pos)
+        return canvas, hist
+
+class Plotter2D_v2(Plotter2D):
+    def __init__(self, style_manager):
+        super().__init__(style_manager)
+    
+    def plot_2d(self, data, x_var, y_var, name, sample_label, final_state_label, sample_label_x_pos=0.65):
+        """Creates a CMS styled 2D plot."""
+        # Load ranges from config
+        x_conf = AnalysisConfig.VARIABLES[x_var]
+        y_conf = AnalysisConfig.VARIABLES[y_var]
+        
+        y_min, y_max = y_conf['range']
+        x_min, x_max = x_conf['range']
+        y_label = y_conf['label']
+        x_label = x_conf['label']
+        hist = self.create_2d_histogram(data[x_var], data[y_var], data['weights'], 
+                                      x_conf['bins'], x_min, x_max, 
+                                      y_conf['bins'], y_min, y_max, name)
+        canvas = CMS.cmsCanvas(name, y_min, y_max, x_min, x_max, y_label, x_label, 
+                              square=False, extraSpace=0.01, iPos=0, with_z_axis=True)
+        axis_labels = {}
+        axis_labels['y'] = y_label
+        axis_labels['x'] = x_label
+        self.plot_2d_baseFormat(hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=sample_label_x_pos)
         return canvas, hist
 
 class PlotterDataMC(PlotterBase):

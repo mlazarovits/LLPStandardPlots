@@ -98,17 +98,35 @@ class SelectionManager:
     """
     Manages physics selections (Cuts, Filters, Triggers).
     """
-    def __init__(self):
+    def __init__(self, exclude_bh_filter = False):
         self.common_cuts = [
             "selCMet > 150",
             "rjrPTS < 150"
         ]
-        self.flags = [
-            "Flag_MetFilters",
-            "hlt_flags" 
-            # Add other boolean flags here if they are single branches
-        ]
-        # HLT fallback expression
+        if exclude_bh_filter:
+           print("Excluding Flag_globalSuperTightHalo2016Filter from event preselection")
+           self.flags = [
+               "hlt_flags", 
+               # Add other boolean flags here if they are single branches
+          	# TODO - check to see if this is all the filters that go into Flag_MetFilters
+               "Flag_BadChargedCandidateFilter",
+               "Flag_BadPFMuonDzFilter",
+               "Flag_BadPFMuonFilter",
+               "Flag_EcalDeadCellTriggerPrimitiveFilter",
+               "Flag_HBHENoiseFilter",
+               "Flag_HBHENoiseIsoFilter",
+               "Flag_ecalBadCalibFilter",
+               "Flag_eeBadScFilter",
+               "Flag_goodVertices",
+               "Flag_hfNoisyHitsFilter"
+           ]
+        else:
+            self.flags = [
+                "hlt_flags",
+        	"Flag_MetFilters"
+            ]
+
+        #HLT fallback expression
         self.hlt_fallback_expression = "(Trigger_PFMET120_PFMHT120_IDTight || Trigger_PFMETNoMu120_PFMHTNoMu120_IDTight || Trigger_PFMET120_PFMHT120_IDTight_PFHT60 || Trigger_PFMETNoMu120_PFMHTNoMu120_IDTight_PFHT60)"
 
     def get_combined_selection_string(self, final_state_flag: str = None):

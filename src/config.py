@@ -138,6 +138,30 @@ class AnalysisConfig:
             'range': (0, 1000),
             'scale': 1.0,
             'is_vector': False
+        },
+        'selPhoEta': {
+            'name': 'photon_eta',
+            'label': 'Pseudorapiditiy (#eta)',
+            'bins': 50,
+            'range': (-3.1, 3.1),
+            'scale': 1.0,
+            'is_vector': True
+        },
+        'selPhoWTime': {
+            'name': 'photon_time',
+            'label': 'Photon Time [ns]',
+            'bins': 50,
+            'range': (-20., 20.),
+            'scale': 1.0,
+            'is_vector': True
+        },
+        'selPho_beamHaloCNNScore': {
+            'name': 'photon_bh_score',
+            'label': 'Photon Beam Halo Discriminant Score',
+            'bins': 50,
+            'range': (0., 1.),
+            'scale': 1.0,
+            'is_vector': True
         }
     }
 

@@ -4,10 +4,10 @@ from src.selections import SelectionManager
 from src.config import AnalysisConfig
 
 class DataLoader:
-    def __init__(self, tree_name='kuSkimTree', luminosity=400):
+    def __init__(self, tree_name='kuSkimTree', luminosity=400, exclude_bh_filter = False):
         self.tree_name = tree_name
         self.luminosity = luminosity
-        self.selection_manager = SelectionManager()
+        self.selection_manager = SelectionManager(exclude_bh_filter)
         self.loading_summary = {
             'data_types_loaded': set(),
             'event_flags': set(),
@@ -59,7 +59,9 @@ class DataLoader:
             'HadronicSV_pOverE', 'HadronicSV_decayAngle', 'HadronicSV_cosTheta',
             'HadronicSV_nTracks',
             'LeptonicSV_mass', 'LeptonicSV_dxy', 'LeptonicSV_dxySig',
-            'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta'
+            'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta',
+	    #Photon beam halo variables for beam halo CR
+	    'selPhoEta','selPhoWTime'	
         ]
         # Add flag branches
         branches.extend(final_state_flags)
@@ -184,7 +186,9 @@ class DataLoader:
             'HadronicSV_pOverE', 'HadronicSV_decayAngle', 'HadronicSV_cosTheta',
             'HadronicSV_nTracks',
             'LeptonicSV_mass', 'LeptonicSV_dxy', 'LeptonicSV_dxySig',
-            'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta'
+            'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta',
+	    #Photon beam halo variables for beam halo CR
+	    'selPhoEta','selPhoWTime'	
         ]
         # Add flag branches and selection manager flags
         branches.extend(event_flags)
@@ -228,10 +232,8 @@ class DataLoader:
                         
                         if np.sum(combined_mask) == 0:
                             continue
-                            
                         extracted_vars = self._extract_values(data, combined_mask, is_data)
                         file_data = self._process_extracted_data(extracted_vars)
-                        
                         if file_data:
                             event_data[fs_flag][file_path] = file_data
                     
@@ -276,7 +278,6 @@ class DataLoader:
         extracted_data = {}
         
         indices = np.where(mask)[0]
-        
         for idx in indices:
             if (len(data['rjr_Ms'][idx]) > 0 and 
                 len(data['rjr_Rs'][idx]) > 0 and 
@@ -304,7 +305,7 @@ class DataLoader:
                             extracted_data[var_key].append(scaled_val)
                             extracted_data[f'{var_key}_weights'].append(base_weight)
                     
-                    elif var_key.startswith('HadronicSV_') or var_key.startswith('LeptonicSV_'):
+                    elif var_key.startswith('HadronicSV_') or var_key.startswith('LeptonicSV_') or var_key.startswith("selPho"):
                         # SV variables: flatten jagged arrays - one entry per SV object
                         sv_array = data[var_key][idx]
                         for sv_val in sv_array:
