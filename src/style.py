@@ -129,7 +129,7 @@ class StyleManager:
             main_latex.SetTextSize(textsize)
             main_latex.SetTextFont(42)
             main_latex.SetTextAlign(11)  # Left aligned
-            main_text = f"Region: {main_label}"
+            main_text = f"{main_label}"
             main_latex.DrawLatex(x_pos, y_pos, main_text)
             
             latex_objects = [main_latex]
@@ -178,5 +178,5 @@ class StyleManager:
             fs_latex.SetTextSize(textsize)
             fs_latex.SetTextFont(42)
             fs_latex.SetTextAlign(11)  # Left aligned
-            fs_latex.DrawLatex(x_pos, y_pos, f"Region: {label}")
+            fs_latex.DrawLatex(x_pos, y_pos, f"{label}")
             return fs_latex

@@ -246,7 +246,7 @@ class Plotter2D(PlotterBase):
             
         return hist
 
-    def plot_2d_baseFormat(self, hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65):
+    def plot_2d_baseFormat(self, hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65, prelim_str = "Preliminary"):
         canvas.SetLogz(True)
         canvas.SetGridx(True)
         canvas.SetGridy(True)
@@ -283,7 +283,7 @@ class Plotter2D(PlotterBase):
         canvas.Update() # Update after drawing histogram
         
         # Use common CMS label drawing, using default positions
-        self.style.draw_cms_labels()
+        self.style.draw_cms_labels(prelim_str = prelim_str)
         self.style.draw_process_label(sample_label, x_pos=sample_label_x_pos, y_pos=0.87)
         self._draw_region_label(canvas, final_state_label, x_pos=0.425, plot_type="2d")
         
@@ -351,8 +351,8 @@ class PlotterDataMC(PlotterBase):
     def _setup_comparison_canvas(self, canvas_name, x_min, x_max, x_label="", canvas_width=1100, canvas_height=800):
         """Shared canvas setup for data/MC comparison plots."""
         canvas = CMS.cmsCanvas(canvas_name, x_min, x_max, 0, 1, x_label, "Events", square=False, extraSpace=0.01, iPos=0)
-        canvas.SetCanvasSize(canvas_width, canvas_height)
-        
+        #canvas.SetCanvasSize(canvas_width, canvas_height) #corrupts canvas for some reason?
+        #
         # Create pads for main plot and ratio
         pad1 = ROOT.TPad("pad1", "pad1", 0, 0.3, 1, 1.0)
         pad2 = ROOT.TPad("pad2", "pad2", 0, 0.0, 1, 0.3)
