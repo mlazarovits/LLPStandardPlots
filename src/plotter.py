@@ -88,7 +88,8 @@ class Plotter1D(PlotterBase):
             # Remove units in brackets like [TeV] and clean up the variable name
             import re
             clean_var = re.sub(r'\s*\[.*?\]', '', x_label).strip()
-            y_axis_title = f"#frac{{1}}{{N}}  #frac{{dN}}{{d({clean_var})}}"
+            #y_axis_title = f"#frac{{1}}{{N}}  #frac{{dN}}{{d({clean_var})}}"
+            y_axis_title = "normalized events"
         else:
             y_axis_title = y_label
             
