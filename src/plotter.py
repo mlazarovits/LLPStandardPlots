@@ -246,7 +246,7 @@ class Plotter2D(PlotterBase):
             
         return hist
 
-    def plot_2d_baseFormat(self, hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65, prelim_str = "Preliminary"):
+    def plot_2d_baseFormat(self, hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65, prelim_str = "Preliminary",normalize=False):
         canvas.SetLogz(True)
         canvas.SetGridx(True)
         canvas.SetGridy(True)
@@ -262,7 +262,10 @@ class Plotter2D(PlotterBase):
         hist.SetTitle("")
         hist.GetXaxis().SetTitle(axis_labels['x'])
         hist.GetYaxis().SetTitle(axis_labels['y'])
-        hist.GetZaxis().SetTitle("Events")
+        if normalize:
+           hist.GetZaxis().SetTitle("normalized events")
+        else:
+            hist.GetZaxis().SetTitle("events")
         hist.GetXaxis().CenterTitle(True)
         hist.GetYaxis().CenterTitle(True)
         hist.GetZaxis().CenterTitle(True)
