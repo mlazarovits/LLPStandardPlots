@@ -51,6 +51,10 @@ class StyleManager:
         """Return a color from the defined palette."""
         return self.colors[index % len(self.colors)]
 
+    def SetLumi(self, lumi):
+        self.luminosity = lumi
+
+
     def set_style(self):
         """Apply global CMS style settings."""
         CMS.SetExtraText("Preliminary")
@@ -94,7 +98,11 @@ class StyleManager:
         lumi_label.SetTextAlign(31)  # Right-aligned
         # Format luminosity without decimal if it's a whole number
         lumi_text = f"{self.luminosity:g}" if self.luminosity == int(self.luminosity) else f"{self.luminosity}"
-        lumi_label.DrawLatex(lumi_x, lumi_y, f"{lumi_text} fb^{{-1}} ({self.energy} TeV)")
+        if self.luminosity > 0:
+            lumi_label.DrawLatex(lumi_x, lumi_y, f"{lumi_text} fb^{{-1}} ({self.energy} TeV)")
+        else:
+            lumi_label.DrawLatex(lumi_x, lumi_y, f"({self.energy} TeV)")
+
 
     def draw_process_label(self, label_text, x_pos=0.65, y_pos=0.85, align=11):
         """Draw the process/sample label on the plot."""
@@ -120,8 +128,8 @@ class StyleManager:
             main_label = label
             if has_ell:
                 main_label = main_label.replace("\\ell\\ell", "  ")
-            if has_hh:
-                main_label = main_label.replace("hh", "  ")
+            #if has_hh:
+            #    main_label = main_label.replace("hh", "  ")
             
             # Draw main label
             main_latex = ROOT.TLatex()
@@ -160,15 +168,15 @@ class StyleManager:
                 ell_latex.Paint()
                 latex_objects.append(ell_latex)
             
-            if has_hh:
-                hh_latex = ROOT.TMathText()
-                hh_latex.SetNDC() 
-                hh_latex.SetTextSize(textsize + size_offset)
-                # Adjust x position if both symbols are present
-                hh_x_offset = x_offset + (0.04 if has_ell else 0)
-                hh_latex.DrawMathText(x_pos + hh_x_offset, y_pos + y_offset, "q\\bar{q}")
-                hh_latex.Paint()
-                latex_objects.append(hh_latex)
+            #if has_hh:
+            #    hh_latex = ROOT.TMathText()
+            #    hh_latex.SetNDC() 
+            #    hh_latex.SetTextSize(textsize + size_offset)
+            #    # Adjust x position if both symbols are present
+            #    hh_x_offset = x_offset + (0.04 if has_ell else 0)
+            #    hh_latex.DrawMathText(x_pos + hh_x_offset, y_pos + y_offset, "q\\bar{q}")
+            #    hh_latex.Paint()
+            #    latex_objects.append(hh_latex)
             
             return latex_objects
         else:

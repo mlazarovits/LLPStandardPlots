@@ -289,7 +289,11 @@ class Plotter2D(PlotterBase):
         # Use common CMS label drawing, using default positions
         self.style.draw_cms_labels(prelim_str = prelim_str)
         self.style.draw_process_label(sample_label, x_pos=sample_label_x_pos, y_pos=0.87)
-        self._draw_region_label(canvas, final_state_label, x_pos=0.425, plot_type="2d")
+        print("prelim_str",prelim_str)
+        if prelim_str == "Preliminary Simulation":
+            self._draw_region_label(canvas, final_state_label, x_pos=0.525, plot_type="2d")
+        else:
+            self._draw_region_label(canvas, final_state_label, x_pos=0.425, plot_type="2d")
         
         canvas.Update() # Update after adding labels
         
