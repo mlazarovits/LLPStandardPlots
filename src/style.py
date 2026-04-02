@@ -54,11 +54,14 @@ class StyleManager:
     def SetLumi(self, lumi):
         self.luminosity = lumi
 
+    def SetEnergy(self, energy):
+        self.energy = energy
 
     def set_style(self):
         """Apply global CMS style settings."""
         CMS.SetExtraText("Preliminary")
         CMS.SetLumi(self.luminosity)
+        CMS.SetEnergy(self.com)
         ROOT.gROOT.SetBatch(True)
     
     def reset_palette_for_1d(self):
