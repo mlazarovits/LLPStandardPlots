@@ -98,10 +98,11 @@ def _parse_groups(entries, base_dir=None):
             raw = entry.get('files', [])
             if isinstance(raw, str):
                 raw = [raw]
+            name = entry.get('name')
             groups.append({
-                'name': entry.get('name'),
+                'name': name,
                 'files': _expand_globs(raw, base_dir),
-                'combine': entry.get('combine', False),
+                'combine': entry.get('combine', name is not None),
             })
     return groups
 
