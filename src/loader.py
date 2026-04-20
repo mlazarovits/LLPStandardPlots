@@ -1,18 +1,35 @@
 import uproot
 import numpy as np
 from src.selections import SelectionManager
-from src.config import AnalysisConfig
+from src.config import AnalysisConfig, AnalysisMode, ModeConfig
+
+
+
+def _merge_chunks(chunks):
+    """Concatenate a list of extracted_vars dicts into one."""
+    if not chunks:
+        return {}
+    merged = {}
+    for key in chunks[0]:
+        arrays = [c[key] for c in chunks if key in c and len(c[key]) > 0]
+        merged[key] = np.concatenate(arrays) if arrays else np.array([])
+    return merged
 
 class DataLoader:
-    def __init__(self, tree_name='kuSkimTree', luminosity=400, exclude_bh_filter = False):
+    def __init__(self, tree_name='kuSkimTree', luminosity=400,
+                 analysis_mode='uncompressed', isr_pt_cut=None):
         self.tree_name = tree_name
         self.luminosity = luminosity
-        self.selection_manager = SelectionManager(exclude_bh_filter)
+        self.analysis_mode = analysis_mode
+        self.isr_pt_cut = isr_pt_cut
+        self.selection_manager = SelectionManager()
         self.loading_summary = {
             'data_types_loaded': set(),
             'event_flags': set(),
             'custom_cuts': set(),
-            'files_processed': 0
+            'files_processed': 0,
+            'analysis_mode': analysis_mode,
+            'isr_pt_cut': isr_pt_cut
         }
 
     def _track_loading(self, event_flags=None, custom_cuts=None, is_data=False, file_count=0):
@@ -23,22 +40,55 @@ class DataLoader:
         if custom_cuts:
             self.loading_summary['custom_cuts'].update(custom_cuts)
         self.loading_summary['files_processed'] += file_count
+
+    def _get_branches_for_mode(self):
+        """Get the list of branches to load based on analysis mode."""
+        mode_config = ModeConfig.get(self.analysis_mode)
+
+        # Common branches for all modes
+        base_branches = [
+            'evtFillWgt', 'SV_nHadronic', 'SV_nLeptonic', 'nSelPhotons', 'selCMet',
+            # SV variables for data/MC comparisons
+            'HadronicSV_mass', 'HadronicSV_dxy', 'HadronicSV_dxySig',
+            'HadronicSV_pOverE', 'HadronicSV_decayAngle', 'HadronicSV_cosTheta',
+            'HadronicSV_nTracks',
+            'LeptonicSV_mass', 'LeptonicSV_dxy', 'LeptonicSV_dxySig',
+            'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta',
+            # Photon timing variables (Gen branches absent in data files; handled gracefully)
+            'baseLinePhoton_WTimeSig',
+            'baseLinePhoton_GenTimeSig',
+            'baseLinePhoton_GenLabTimeSig'
+        ]
+
+        # Add mode-specific branches
+        branches = base_branches + mode_config['branches']
+
+        return branches
     
     def print_comprehensive_summary(self):
         """Print comprehensive summary after all loading is complete."""
         print(f"\n🎨 DATA LOADER SUMMARY:")
         print("=" * 60)
+        print(f"    • Analysis mode: {self.analysis_mode}")
+        if self.analysis_mode == AnalysisMode.COMPRESSED and self.isr_pt_cut is not None:
+            print(f"    • ISR pT cut: {self.isr_pt_cut:.0f} GeV")
         print(f"    • Luminosity: {self.luminosity:.1f} fb⁻¹")
         print(f"    • Tree name: {self.tree_name}")
         print(f"    • Data types loaded: {', '.join(sorted(self.loading_summary['data_types_loaded']))}")
         print(f"    • Files processed: {self.loading_summary['files_processed']}")
-        
-        # Show baseline cuts
-        baseline_cuts = []
-        baseline_cuts.extend(self.selection_manager.common_cuts)
+
+        # Show baseline cuts (mode-aware)
+        baseline_cuts = ["selCMet > 150", "evtFillWgt < 10"]
         baseline_cuts.extend([f"({flag} == 1)" for flag in self.selection_manager.flags])
+
+        # Add mode-specific cuts
+        if self.analysis_mode == AnalysisMode.UNCOMPRESSED:
+            baseline_cuts.append("rjrPTS < 150")
+        elif self.analysis_mode == AnalysisMode.COMPRESSED and self.isr_pt_cut is not None:
+            baseline_cuts.append(f"rjrIsr_PtIsr >= {self.isr_pt_cut:.0f}")
+
         print(f"    • Baseline cuts: {', '.join(baseline_cuts)}")
-        
+
         if self.loading_summary['event_flags']:
             print(f"    • Event flags: {', '.join(sorted(self.loading_summary['event_flags']))}")
         if self.loading_summary['custom_cuts']:
@@ -52,8 +102,8 @@ class DataLoader:
         self._track_loading(event_flags=final_state_flags, file_count=len(file_paths))
         # branches to load
         branches = [
-            'rjr_Ms', 'rjr_Rs', 'evtFillWgt', 'SV_nHadronic', 
-            'selCMet', 'rjrPTS',
+            'rjr_Ms', 'rjr_Rs', 'evtFillWgt', 'SV_nHadronic', 'SV_nLeptonic',
+            'nSelPhotons', 'selCMet', 'rjrPTS',
             # SV variables for data/MC comparisons
             'HadronicSV_mass', 'HadronicSV_dxy', 'HadronicSV_dxySig',
             'HadronicSV_pOverE', 'HadronicSV_decayAngle', 'HadronicSV_cosTheta',
@@ -177,160 +227,256 @@ class DataLoader:
         Returns: (event_flag_data, custom_cut_data)
         """
         self._track_loading(event_flags=event_flags, custom_cuts=custom_cuts, is_data=is_data, file_count=len(file_paths))
-        # branches to load
-        branches = [
-            'rjr_Ms', 'rjr_Rs', 'evtFillWgt', 'SV_nHadronic', 
-            'selCMet', 'rjrPTS', 'nSelPhotons',
-            # SV variables for data/MC comparisons
-            'HadronicSV_mass', 'HadronicSV_dxy', 'HadronicSV_dxySig',
-            'HadronicSV_pOverE', 'HadronicSV_decayAngle', 'HadronicSV_cosTheta',
-            'HadronicSV_nTracks',
-            'LeptonicSV_mass', 'LeptonicSV_dxy', 'LeptonicSV_dxySig',
-            'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta',
-	    #Photon beam halo variables for beam halo CR
-	    'selPhoEta','selPhoWTime'	
-        ]
-        # Add flag branches and selection manager flags
-        branches.extend(event_flags)
+        # branches to load - use mode-aware branch selection
+        branches = self._get_branches_for_mode()
+        # Add flag branches, expanding '+'(AND) and '|'(OR) operators into components
+        for flag in event_flags:
+            for or_part in flag.split('|'):
+                branches.extend(f.strip() for f in or_part.split('+'))
         branches.extend(self.selection_manager.flags)
         
         # Initialize data structures
         event_data = {flag: {} for flag in event_flags}
         custom_data = {f"CustomRegion{i+1}": {} for i in range(len(custom_cuts))}
         
-        for file_path in file_paths:
-            print(f"Loading {file_path}...")
-            try:
-                with uproot.open(file_path) as f:
-                    if self.tree_name not in f:
-                        print(f"  Warning: Tree {self.tree_name} not found in {file_path}")
-                        continue
-                        
-                    tree = f[self.tree_name]
-                    # Get all available branches first
-                    available_branches = [b for b in branches if b in tree]
-                    data = tree.arrays(available_branches, library='np')
-                    
-                    n_events = len(data['evtFillWgt'])
+        results = [self._load_one_file(fp, branches, event_flags, custom_cuts, is_data)
+                   for fp in file_paths]
+
+        for file_path, file_event, file_custom in results:
+            for flag, fdata in file_event.items():
+                event_data[flag][file_path] = fdata
+            for region, fdata in file_custom.items():
+                custom_data[region][file_path] = fdata
+
+        return event_data, custom_data
+
+    def _load_one_file(self, file_path, branches, event_flags, custom_cuts, is_data):
+        """Load and process a single file in chunks to bound memory usage."""
+        CHUNK_SIZE = 100_000
+
+        event_result = {}
+        custom_result = {}
+
+        print(f"Loading {file_path}...")
+        try:
+            with uproot.open(file_path) as f:
+                if self.tree_name not in f:
+                    print(f"  Warning: Tree {self.tree_name} not found in {file_path}")
+                    return file_path, event_result, custom_result
+
+                tree = f[self.tree_name]
+                available_branches = [b for b in branches if b in tree]
+                cut_expr = (f"(selCMet > {AnalysisConfig.MET_CUT}) &"
+                            f" (evtFillWgt < {AnalysisConfig.EVT_WGT_CUT})")
+
+                event_chunks = {flag: [] for flag in event_flags}
+                custom_chunks = {f"CustomRegion{i+1}": [] for i in range(len(custom_cuts))}
+                flag_counts  = {flag: 0 for flag in event_flags}
+                pass_counts  = {flag: 0 for flag in event_flags}
+
+                for chunk in tree.iterate(available_branches, cut=cut_expr,
+                                          library='np', step_size=CHUNK_SIZE):
+                    n_events = len(chunk['evtFillWgt'])
                     base_mask = np.ones(n_events, dtype=bool)
-                    
-                    # Scalar cuts using Config
-                    base_mask &= (data['selCMet'] > AnalysisConfig.MET_CUT)
-                    base_mask &= (data['evtFillWgt'] < AnalysisConfig.EVT_WGT_CUT)
-                    
-                    # Flag cuts (filters)
+
                     for flag in self.selection_manager.flags:
-                        if flag in data:
-                            base_mask &= (data[flag] == 1)
-                    
-                    # Process event flags
+                        if flag in chunk:
+                            base_mask &= (chunk[flag] == 1)
+
+                    # Process event flags ('|' = OR, '+' = AND)
                     for fs_flag in event_flags:
-                        if fs_flag not in data:
+                        or_parts = [p.strip() for p in fs_flag.split('|')]
+                        flag_mask = np.zeros(n_events, dtype=bool)
+                        all_missing = True
+
+                        for or_part in or_parts:
+                            sub_flags = [f.strip() for f in or_part.split('+')]
+                            if any(sf not in chunk for sf in sub_flags):
+                                continue
+                            all_missing = False
+                            and_mask = np.ones(n_events, dtype=bool)
+                            for sf in sub_flags:
+                                and_mask &= (chunk[sf] == 1)
+                            flag_mask |= and_mask
+
+                        if all_missing:
                             continue
-                            
-                        combined_mask = base_mask & (data[fs_flag] == 1)
-                        
+
+                        combined_mask = base_mask & flag_mask
+                        flag_counts[fs_flag] += int(np.sum(flag_mask))
+                        pass_counts[fs_flag] += int(np.sum(combined_mask))
+
                         if np.sum(combined_mask) == 0:
                             continue
-                        extracted_vars = self._extract_values(data, combined_mask, is_data)
-                        file_data = self._process_extracted_data(extracted_vars)
-                        if file_data:
-                            event_data[fs_flag][file_path] = file_data
-                    
+
+                        extracted_vars = self._extract_values(chunk, combined_mask, is_data)
+                        if extracted_vars:
+                            event_chunks[fs_flag].append(extracted_vars)
+
                     # Process custom cuts
                     for i, custom_cut in enumerate(custom_cuts):
                         custom_region_name = f"CustomRegion{i+1}"
                         try:
-                            # Get the arrays we need
-                            nSelPhotons = data.get("nSelPhotons", np.zeros(n_events))
-                            SV_nHadronic = data.get("SV_nHadronic", np.zeros(n_events))
-                            selCMet = data.get("selCMet", np.zeros(n_events))
-                            
-                            # Parse and evaluate the custom cut manually to avoid eval() issues
-                            custom_mask = self._parse_simple_cut(custom_cut, {
-                                'nSelPhotons': nSelPhotons,
-                                'SV_nHadronic': SV_nHadronic, 
-                                'selCMet': selCMet
-                            })
-                            
+                            cut_variables = {
+                                'nSelPhotons': chunk.get("nSelPhotons", np.zeros(n_events)),
+                                'SV_nHadronic': chunk.get("SV_nHadronic", np.zeros(n_events)),
+                                'SV_nLeptonic': chunk.get("SV_nLeptonic", np.zeros(n_events)),
+                                'selCMet':      chunk.get("selCMet",      np.zeros(n_events)),
+                            }
+                            if self.analysis_mode == AnalysisMode.COMPRESSED:
+                                for isr_var in ['rjrIsr_Ms', 'rjrIsr_MsPerp', 'rjrIsr_PtIsr',
+                                               'rjrIsr_RIsr', 'rjrIsr_Rs', 'rjrIsrPTS',
+                                               'rjrIsr_nSVisObjects', 'rjrIsr_nIsrVisObjects']:
+                                    if isr_var in chunk:
+                                        cut_variables[isr_var] = chunk[isr_var]
+                            custom_mask = self._parse_simple_cut(custom_cut, cut_variables)
                             combined_mask = base_mask & custom_mask
                         except Exception as e:
                             print(f"  Warning: Failed to evaluate custom cut '{custom_cut}': {e}")
                             continue
-                        
+
                         if np.sum(combined_mask) == 0:
                             continue
-                            
-                        extracted_vars = self._extract_values(data, combined_mask, is_data)
-                        file_data = self._process_extracted_data(extracted_vars)
-                        
-                        if file_data:
-                            custom_data[custom_region_name][file_path] = file_data
-                            
-            except Exception as e:
-                print(f"  Error loading {file_path}: {e}")
-                
-        return event_data, custom_data
+                        extracted_vars = self._extract_values(chunk, combined_mask, is_data)
+                        if extracted_vars:
+                            custom_chunks[custom_region_name].append(extracted_vars)
+
+                # Merge chunks
+                for fs_flag in event_flags:
+                    if pass_counts[fs_flag] == 0:
+                        print(f"  Warning: 0 events pass baseline cuts for '{fs_flag}' in {file_path} "
+                              f"({flag_counts[fs_flag]} passed the flag(s) before baseline cuts)")
+                        continue
+                    if not event_chunks[fs_flag]:
+                        continue
+                    file_data = self._process_extracted_data(_merge_chunks(event_chunks[fs_flag]))
+                    if file_data:
+                        event_result[fs_flag] = file_data
+                    else:
+                        print(f"  Warning: Events passed '{fs_flag}' and baseline cuts but failed "
+                              f"mode validation in {file_path}")
+
+                for i in range(len(custom_cuts)):
+                    region = f"CustomRegion{i+1}"
+                    if not custom_chunks[region]:
+                        continue
+                    file_data = self._process_extracted_data(_merge_chunks(custom_chunks[region]))
+                    if file_data:
+                        custom_result[region] = file_data
+
+        except Exception as e:
+            print(f"  Error loading {file_path}: {e}")
+
+        return file_path, event_result, custom_result
 
     def _extract_values(self, data, mask, is_data=False):
         """Helper method to extract values for both event flags and custom cuts."""
         # Initialize storage for all variables
         extracted_data = {}
-        
+
         indices = np.where(mask)[0]
         for idx in indices:
-            if (len(data['rjr_Ms'][idx]) > 0 and 
-                len(data['rjr_Rs'][idx]) > 0 and 
-                len(data['rjrPTS'][idx]) > 0 and 
-                data['rjrPTS'][idx][0] < AnalysisConfig.RJR_PTS_CUT): 
-                
-                # Get base event weight
-                base_weight = 1.0 if is_data else data['evtFillWgt'][idx] * self.luminosity
-                
-                # Extract all configured variables
-                for var_key, var_config in AnalysisConfig.VARIABLES.items():
-                    if var_key not in data:
-                        continue
-                    
-                    if var_key not in extracted_data:
-                        extracted_data[var_key] = []
-                        if var_key != 'weights':  # Don't create weights array for weights key
-                            extracted_data[f'{var_key}_weights'] = []
-                    
-                    if var_key in ['rjr_Ms', 'rjr_Rs']:
-                        # Special case: rjr variables take element [0] 
-                        if len(data[var_key][idx]) > 0:
-                            raw_val = data[var_key][idx][0]
-                            scaled_val = raw_val * var_config['scale']
-                            extracted_data[var_key].append(scaled_val)
-                            extracted_data[f'{var_key}_weights'].append(base_weight)
-                    
-                    elif var_key.startswith('HadronicSV_') or var_key.startswith('LeptonicSV_') or var_key.startswith("selPho"):
-                        # SV variables: flatten jagged arrays - one entry per SV object
-                        sv_array = data[var_key][idx]
-                        for sv_val in sv_array:
-                            scaled_val = sv_val * var_config['scale']
-                            extracted_data[var_key].append(scaled_val)
-                            extracted_data[f'{var_key}_weights'].append(base_weight)
-                    
-                    elif not var_config['is_vector']:
-                        # Scalar event-level variables (like selCMet)
-                        raw_val = data[var_key][idx]
+            # Mode-specific validation
+            passes_validation = False
+
+            if self.analysis_mode == AnalysisMode.UNCOMPRESSED:
+                # Uncompressed mode: require rjr_Ms, rjr_Rs, and rjrPTS < 150
+                if ('rjr_Ms' in data and 'rjr_Rs' in data and 'rjrPTS' in data and
+                    len(data['rjr_Ms'][idx]) > 0 and
+                    len(data['rjr_Rs'][idx]) > 0 and
+                    len(data['rjrPTS'][idx]) > 0 and
+                    data['rjrPTS'][idx][0] < AnalysisConfig.RJR_PTS_CUT):
+                    passes_validation = True
+            else:
+                # Compressed mode: require ISR variables and optionally apply ISR pT cut
+                if 'rjrIsrPTS' in data:
+                    if self.isr_pt_cut is not None:
+                        # Apply ISR pT cut if specified (skip events below the cut)
+                        if 'rjrIsr_PtIsr' in data and data['rjrIsr_PtIsr'][idx] >= self.isr_pt_cut:
+                            passes_validation = True
+                    else:
+                        passes_validation = True
+
+            if not passes_validation:
+                continue
+
+            # Get base event weight
+            base_weight = 1.0 if is_data else data['evtFillWgt'][idx] * self.luminosity
+
+            # Extract all configured variables
+            for var_key, var_config in AnalysisConfig.VARIABLES.items():
+                if var_key not in data:
+                    continue
+
+                # Skip MC-only variables when processing data
+                if var_config.get('mc_only', False) and is_data:
+                    continue
+
+                if var_key not in extracted_data:
+                    extracted_data[var_key] = []
+                    if var_key != 'weights':  # Don't create weights array for weights key
+                        extracted_data[f'{var_key}_weights'] = []
+
+                if var_key in ['rjr_Ms', 'rjr_Rs']:
+                    # Special case: rjr variables take element [0]
+                    if len(data[var_key][idx]) > 0:
+                        raw_val = data[var_key][idx][0]
                         scaled_val = raw_val * var_config['scale']
+
+                        # Apply cross-cut on the paired RJR variable if defined
+                        cross_cut = var_config.get('cross_cut')
+                        if cross_cut:
+                            other_branch, op, threshold = cross_cut
+                            other_scale = AnalysisConfig.VARIABLES[other_branch]['scale']
+                            if (other_branch in data and len(data[other_branch][idx]) > 0):
+                                other_val = data[other_branch][idx][0] * other_scale
+                                if not (other_val > threshold if op == '>' else other_val < threshold):
+                                    continue
+
                         extracted_data[var_key].append(scaled_val)
                         extracted_data[f'{var_key}_weights'].append(base_weight)
-        
+
+                elif var_key.startswith('HadronicSV_') or var_key.startswith('LeptonicSV_'):
+                    # SV variables: flatten jagged arrays - one entry per SV object
+                    sv_array = data[var_key][idx]
+                    for sv_val in sv_array:
+                        scaled_val = sv_val * var_config['scale']
+                        extracted_data[var_key].append(scaled_val)
+                        extracted_data[f'{var_key}_weights'].append(base_weight)
+
+                elif var_key.startswith('baseLinePhoton_'):
+                    # Photon variables: flatten jagged arrays - one entry per photon object
+                    photon_array = data[var_key][idx]
+                    for ph_val in photon_array:
+                        scaled_val = ph_val * var_config['scale']
+                        extracted_data[var_key].append(scaled_val)
+                        extracted_data[f'{var_key}_weights'].append(base_weight)
+
+                elif not var_config['is_vector']:
+                    # Scalar event-level variables (like selCMet, ISR variables)
+                    raw_val = data[var_key][idx]
+                    scaled_val = raw_val * var_config['scale']
+                    extracted_data[var_key].append(scaled_val)
+                    extracted_data[f'{var_key}_weights'].append(base_weight)
+
         # Convert all lists to numpy arrays
         for var_key in extracted_data:
             extracted_data[var_key] = np.array(extracted_data[var_key])
-        
+
         return extracted_data
 
     def _process_extracted_data(self, extracted_vars):
         """Convert extracted variables to file data structure."""
-        if not extracted_vars or 'rjr_Ms' not in extracted_vars:
+        if not extracted_vars:
             return None
-            
+
+        # Check for mode-appropriate primary variable
+        has_uncompressed_vars = 'rjr_Ms' in extracted_vars
+        has_compressed_vars = 'rjrIsr_Ms' in extracted_vars or 'rjrIsr_PtIsr' in extracted_vars
+
+        if not has_uncompressed_vars and not has_compressed_vars:
+            return None
+
         # Create data structure with all variables and their specific weights
         file_data = {}
         for var_key in extracted_vars:
@@ -341,45 +487,106 @@ class DataLoader:
                 var_weights_key = f'{var_key}_weights'
                 if var_weights_key in extracted_vars:
                     file_data[var_weights_key] = extracted_vars[var_weights_key]
-        
-        # For backward compatibility with existing code, use rjr_Ms weights as default 'weights'
+
+        # Set default 'weights' for backward compatibility
         if 'rjr_Ms_weights' in extracted_vars:
             file_data['weights'] = extracted_vars['rjr_Ms_weights']
-        
+        elif 'rjrIsr_Ms_weights' in extracted_vars:
+            file_data['weights'] = extracted_vars['rjrIsr_Ms_weights']
+        elif 'rjrIsr_PtIsr_weights' in extracted_vars:
+            file_data['weights'] = extracted_vars['rjrIsr_PtIsr_weights']
+
         return file_data
 
     def _parse_simple_cut(self, cut_string, variables):
         """
         Parse simple cut expressions without eval().
-        Supports patterns like: 'var==value', 'var1==val1 & var2==val2'
+        Supports patterns like: 'var==value', 'var1==val1 && var2==val2'
+        Handles &&, &, and || as logical operators.
         """
         import re
-        
-        # Handle the specific patterns we expect
-        if ' & ' in cut_string:
-            # Split on & and evaluate each part
-            parts = cut_string.split(' & ')
+
+        cut_string = cut_string.strip()
+
+        # Strip matching outer parentheses and recurse
+        if cut_string.startswith('(') and cut_string.endswith(')'):
+            # Verify they actually match (not e.g. "(a>1) | (b>1)")
+            depth = 0
+            matched = True
+            for i, ch in enumerate(cut_string):
+                if ch == '(':
+                    depth += 1
+                elif ch == ')':
+                    depth -= 1
+                if depth == 0 and i < len(cut_string) - 1:
+                    matched = False
+                    break
+            if matched:
+                return self._parse_simple_cut(cut_string[1:-1], variables)
+
+        # Normalize logical operators: replace '&&' with ' & ' and '||' with ' | '
+        normalized = cut_string.replace('&&', ' & ').replace('||', ' | ')
+
+        # Split on OR first (lower precedence), respecting parentheses
+        or_parts = self._split_respecting_parens(normalized, ' | ')
+        if len(or_parts) > 1:
             result_mask = None
-            
-            for part in parts:
-                part_mask = self._evaluate_single_condition(part.strip(), variables)
+            for part in or_parts:
+                part_mask = self._parse_simple_cut(part, variables)
+                if result_mask is None:
+                    result_mask = part_mask
+                else:
+                    result_mask = result_mask | part_mask
+            return result_mask
+
+        # Then split on AND, respecting parentheses
+        and_parts = self._split_respecting_parens(normalized, ' & ')
+        if len(and_parts) > 1:
+            result_mask = None
+            for part in and_parts:
+                part_mask = self._parse_simple_cut(part, variables)
                 if result_mask is None:
                     result_mask = part_mask
                 else:
                     result_mask = result_mask & part_mask
             return result_mask
-        else:
-            # Single condition
-            return self._evaluate_single_condition(cut_string, variables)
-    
+
+        # Single condition
+        return self._evaluate_single_condition(cut_string.strip(), variables)
+
+    def _split_respecting_parens(self, text, delimiter):
+        """Split text on delimiter only when not inside parentheses."""
+        parts = []
+        depth = 0
+        current = []
+        i = 0
+        while i < len(text):
+            if text[i] == '(':
+                depth += 1
+                current.append(text[i])
+                i += 1
+            elif text[i] == ')':
+                depth -= 1
+                current.append(text[i])
+                i += 1
+            elif depth == 0 and text[i:i+len(delimiter)] == delimiter:
+                parts.append(''.join(current).strip())
+                current = []
+                i += len(delimiter)
+            else:
+                current.append(text[i])
+                i += 1
+        parts.append(''.join(current).strip())
+        return parts
+
     def _evaluate_single_condition(self, condition, variables):
         """
         Evaluate a single condition like 'nSelPhotons==1'
         """
         import re
         
-        # Parse condition with regex
-        match = re.match(r'(\w+)\s*(==|!=|<=|>=|<|>)\s*(\d+(?:\.\d+)?)', condition)
+        # Parse condition with regex ($ anchor ensures full match, no trailing text ignored)
+        match = re.match(r'(\w+)\s*(==|!=|<=|>=|<|>)\s*(\d+(?:\.\d+)?)\s*$', condition)
         if not match:
             raise ValueError(f"Cannot parse condition: {condition}")
             
@@ -411,13 +618,18 @@ class DataLoader:
         """Combines data from multiple files (e.g. for total background)."""
         if not data_dict:
             return None
-            
-        ms_combined = np.concatenate([d['rjr_Ms'] for d in data_dict.values()])
-        rs_combined = np.concatenate([d['rjr_Rs'] for d in data_dict.values()])
-        weights_combined = np.concatenate([d['weights'] for d in data_dict.values()])
-        
-        return {
-            'rjr_Ms': ms_combined,
-            'rjr_Rs': rs_combined,
-            'weights': weights_combined
-        }
+
+        # Get all keys from the first file's data
+        first_data = next(iter(data_dict.values()))
+        all_keys = list(first_data.keys())
+
+        # Combine all variables that exist across all files
+        combined = {}
+        for key in all_keys:
+            try:
+                combined[key] = np.concatenate([d[key] for d in data_dict.values() if key in d])
+            except (KeyError, ValueError):
+                # Skip keys that don't exist in all files or can't be concatenated
+                continue
+
+        return combined if combined else None
