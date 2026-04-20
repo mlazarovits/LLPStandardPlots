@@ -1,10 +1,42 @@
 import ROOT
 import numpy as np
-import cmsstyle as CMS
-from LLPStandardPlots.src.style import StyleManager
-from LLPStandardPlots.src.utils import parse_signal_name, parse_background_name
-from LLPStandardPlots.src.config import AnalysisConfig
-from LLPStandardPlots.src.unrolled import UnrolledBinning
+try:
+    import cmsstyle as CMS
+except ImportError:
+    class CMS:
+        @staticmethod
+        def cmsCanvas(canvName, x_min, x_max, y_min, y_max, nameXaxis, nameYaxis,
+                      square=True, iPos=11, extraSpace=0, with_z_axis=False, **kwargs):
+            W = 600 if square else 800
+            canv = ROOT.TCanvas(canvName, canvName, 50, 50, W, 600)
+            canv.SetFillColor(0)
+            canv.SetBorderMode(0)
+            canv.SetFrameFillStyle(0)
+            canv.SetFrameBorderMode(0)
+            h = canv.DrawFrame(x_min, y_min, x_max, y_max)
+            h.GetXaxis().SetTitle(nameXaxis)
+            h.GetYaxis().SetTitle(nameYaxis)
+            h.Draw("AXIS")
+            canv.RedrawAxis()
+            canv.GetFrame().Draw()
+            return canv
+
+        @staticmethod
+        def cmsLeg(x1, y1, x2, y2, textSize=0.04, textFont=42,
+                   textColor=ROOT.kBlack, **kwargs):
+            leg = ROOT.TLegend(x1, y1, x2, y2, "", "brNDC")
+            leg.SetTextSize(textSize)
+            leg.SetTextFont(textFont)
+            leg.SetTextColor(textColor)
+            leg.SetBorderSize(0)
+            leg.SetFillStyle(0)
+            leg.SetFillColor(0)
+            leg.Draw()
+            return leg
+from src.style import StyleManager
+from src.utils import parse_signal_name, parse_background_name
+from src.config import AnalysisConfig
+from src.unrolled import UnrolledBinning
 
 ROOT.gROOT.ForceStyle(False)
 
@@ -17,7 +49,7 @@ class PlotterBase:
         if label:
             y_pos = y_pos if y_pos is not None else self.style.cms_y_pos
             textsize = textsize if textsize is not None else self.style.sample_label_size
-            
+
             # Use style manager to handle complex label rendering
             latex_objects = self.style.draw_region_label(canvas, label, x_pos, y_pos, textsize, plot_type)
             
@@ -30,26 +62,13 @@ class PlotterBase:
             return latex_objects
 
     def _map_var_name(self, var_name):
-        """Map short variable names to full data keys."""
-        var_map = {
-            'ms': 'rjr_Ms', 
-            'rs': 'rjr_Rs',
-            'met': 'selCMet',
-            'had_mass': 'HadronicSV_mass',
-            'had_dxy': 'HadronicSV_dxy', 
-            'had_dxysig': 'HadronicSV_dxySig',
-            'had_povere': 'HadronicSV_pOverE',
-            'had_decayangle': 'HadronicSV_decayAngle',
-            'had_costheta': 'HadronicSV_cosTheta',
-            'ntracks': 'HadronicSV_nTracks',
-            'lep_mass': 'LeptonicSV_mass',
-            'lep_dxy': 'LeptonicSV_dxy',
-            'lep_dxysig': 'LeptonicSV_dxySig', 
-            'lep_povere': 'LeptonicSV_pOverE',
-            'lep_decayangle': 'LeptonicSV_decayAngle',
-            'lep_costheta': 'LeptonicSV_cosTheta'
-        }
-        return var_map.get(var_name, var_name)
+        """Map a short variable name (e.g. 'ms') to its full branch key (e.g. 'rjr_Ms').
+        Derived dynamically from AnalysisConfig.VARIABLES so new variables work automatically.
+        Falls back to var_name itself if no match is found."""
+        for branch, conf in AnalysisConfig.VARIABLES.items():
+            if conf['name'] == var_name:
+                return branch
+        return var_name
 
 class Plotter1D(PlotterBase):
     def __init__(self, style_manager):
@@ -121,13 +140,17 @@ class Plotter1D(PlotterBase):
         else:
             legend = CMS.cmsLeg(0.35, 0.675, 0.65, 0.874, textSize=0.035)
         
+        mapped_key = self._map_var_name(var_name)
+        var_weights_key = f'{mapped_key}_weights'
         hists = []
         max_y = 0
-        
+
         for i, (filename, data) in enumerate(data_collection.items()):
+            if mapped_key not in data:
+                continue
             color = self.style.get_color(i)
-            
-            h = self.create_histogram(data[self._map_var_name(var_name)], data['weights'], bins, x_min, x_max, filename, color=color)
+            weights = data.get(var_weights_key, data.get('weights', []))
+            h = self.create_histogram(data[mapped_key], weights, bins, x_min, x_max, filename, color=color)
             if normalized and h.Integral() > 0:
                 h.Scale(1.0 / h.Integral())
             
@@ -144,20 +167,22 @@ class Plotter1D(PlotterBase):
                 
             legend.AddEntry(h, label, "fl")
 
-        if hists:
-            # Use helper for axis setup
-            self.setup_axes(hists[0], var_label, normalized=normalized)
+        if not hists:
+            return None
 
-            hists[0].GetYaxis().SetRangeUser(0.0001, max_y * 100 if normalized else max_y * 1000)
-            hists[0].Draw("HIST")
-            for h in hists[1:]:
-                h.Draw("HIST SAME")
-        
+        # Use helper for axis setup
+        self.setup_axes(hists[0], var_label, normalized=normalized)
+
+        hists[0].GetYaxis().SetRangeUser(0.0001, max_y * 100 if normalized else max_y * 1000)
+        hists[0].Draw("HIST")
+        for h in hists[1:]:
+            h.Draw("HIST SAME")
+
         legend.Draw()
         canvas.SetLogy()
         # Use common CMS label drawing, optimized for 1D
         self.style.draw_cms_labels(cms_x=0.16, cms_y=self.style.cms_y_pos, prelim_x=0.248, lumi_x=0.9, cms_text_size_mult=1.)
-        
+
         # Draw Region Label
         self._draw_region_label(canvas, final_state_label, plot_type="1d")
 
@@ -166,7 +191,7 @@ class Plotter1D(PlotterBase):
         # Keep objects alive
         canvas.hists = hists
         canvas.legend = legend
-        
+
         return canvas
 
     def plot_signals_vs_net_background(self, signals_data, background_combined, var_name, var_label, bins, x_min, x_max, normalized=False, suffix="", final_state_label=None):
@@ -226,13 +251,81 @@ class Plotter1D(PlotterBase):
         self._draw_region_label(canvas, final_state_label, plot_type="1d")
 
         canvas.Update() # Ensure all drawing is updated
-        
+
         # Keep objects alive
         canvas.bg_hist = bg_hist
         canvas.sig_hists = sig_hists
         canvas.legend = legend
         
         return canvas, bg_hist, sig_hists # Return objs to keep in memory
+
+    def plot_cr_data_vs_sr_signal(self, data_cr_collection, signal_sr_collection, var_name,
+                                   var_label, bins, x_min, x_max, cr_label="Data (CR)",
+                                   suffix="", final_state_label=None):
+        """Overlay normalized data CR (thick black line) with normalized signal SR histograms.
+        Always normalized to unit area for shape comparison.
+        CMS label reads 'Preliminary' since real data is displayed."""
+        canvas_name = f"cr_vs_sr_{var_name}_{suffix}"
+        canvas = self._initialize_canvas(canvas_name, x_min, x_max, var_label)
+        legend = CMS.cmsLeg(0.35, 0.675, 0.65, 0.874, textSize=0.035)
+
+        mapped_var = self._map_var_name(var_name)
+        var_weights_key = f'{mapped_var}_weights'
+        max_y = 0
+
+        # --- Signal SR histograms (drawn first, colored lines) ---
+        sig_hists = []
+        for i, (file_path, data) in enumerate(signal_sr_collection.items()):
+            if mapped_var not in data:
+                continue
+            weights = data.get(var_weights_key, data.get('weights', []))
+            h = self.create_histogram(data[mapped_var], weights, bins, x_min, x_max,
+                                      file_path, color=self.style.get_color(i))
+            if h.Integral() > 0:
+                h.Scale(1.0 / h.Integral())
+            max_y = max(max_y, h.GetMaximum())
+            sig_hists.append(h)
+            legend.AddEntry(h, parse_signal_name(file_path), "fl")
+
+        # --- Data CR histogram (combine all data files, drawn last / on top) ---
+        all_cr_vals, all_cr_weights = [], []
+        for data in data_cr_collection.values():
+            if mapped_var in data:
+                all_cr_vals.extend(data[mapped_var])
+                all_cr_weights.extend(data.get(var_weights_key, data.get('weights', [])))
+
+        h_cr = None
+        if all_cr_vals:
+            h_cr = self.create_histogram(np.array(all_cr_vals), np.array(all_cr_weights),
+                                         bins, x_min, x_max, "data_cr", color=ROOT.kBlack)
+            if h_cr.Integral() > 0:
+                h_cr.Scale(1.0 / h_cr.Integral())
+            h_cr.SetLineWidth(3)
+            max_y = max(max_y, h_cr.GetMaximum())
+            legend.AddEntry(h_cr, cr_label, "l")
+
+        # Draw: signals first so data CR lands on top
+        all_hists = sig_hists + ([h_cr] if h_cr is not None else [])
+        if all_hists:
+            self.setup_axes(all_hists[0], var_label, normalized=True)
+            all_hists[0].GetYaxis().SetRangeUser(0.0001, max_y * 100)
+            all_hists[0].Draw("HIST")
+            for h in all_hists[1:]:
+                h.Draw("HIST SAME")
+
+        legend.Draw()
+        canvas.SetLogy()
+        # "Preliminary" because real data is shown alongside signal MC
+        self.style.draw_cms_labels(cms_x=0.16, cms_y=self.style.cms_y_pos,
+                                   prelim_str="Preliminary", prelim_x=0.248,
+                                   lumi_x=0.9, cms_text_size_mult=1.)
+        self._draw_region_label(canvas, final_state_label, plot_type="1d")
+        canvas.Update()
+
+        canvas.sig_hists = sig_hists
+        canvas.h_cr = h_cr
+        canvas.legend = legend
+        return canvas
 
 class Plotter2D(PlotterBase):
     def __init__(self, style_manager):
@@ -248,16 +341,47 @@ class Plotter2D(PlotterBase):
         return hist
 
     def plot_2d_baseFormat(self, hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65, prelim_str = "Preliminary",normalize=False):
+        """Creates a CMS styled 2D plot with configurable x and y variables."""
+        # Load ranges from config
+        x_conf = AnalysisConfig.VARIABLES.get(x_var)
+        y_conf = AnalysisConfig.VARIABLES.get(y_var)
+
+        if not x_conf or not y_conf:
+            raise ValueError(f"Variable config not found for x_var={x_var} or y_var={y_var}")
+
+        x_min, x_max = x_conf['range']
+        y_min, y_max = y_conf['range']
+        x_label = x_conf['label']
+        y_label = y_conf['label']
+
+        # Get data arrays - use the mapped variable name or branch name directly
+        x_data_key = self._map_var_name(x_conf['name'])
+        y_data_key = self._map_var_name(y_conf['name'])
+
+        # Try branch name first, then mapped name
+        x_data = data.get(x_var, data.get(x_data_key, []))
+        y_data = data.get(y_var, data.get(y_data_key, []))
+
+        if len(x_data) == 0 or len(y_data) == 0:
+            print(f"  Warning: No data for 2D plot {name} (x_var={x_var}, y_var={y_var})")
+            return None, None
+
+        hist = self.create_2d_histogram(x_data, y_data, data['weights'],
+                                      x_conf['bins'], x_min, x_max,
+                                      y_conf['bins'], y_min, y_max, name)
+
+        canvas = CMS.cmsCanvas(name, x_min, x_max, y_min, y_max, x_label, y_label,
+                              square=False, extraSpace=0.01, iPos=0, with_z_axis=True)
         canvas.SetLogz(True)
         canvas.SetGridx(True)
         canvas.SetGridy(True)
         canvas.SetLeftMargin(self.style.margin_left)
         canvas.SetRightMargin(self.style.margin_right+0.06)
         canvas.cd() # Explicitly change to this canvas
-        
+
         # Re-apply palette (CMS style might reset it)
         ROOT.gStyle.SetPalette(self.style.color_palette)
-        
+
         # Set histogram formatting (restored from original)
         hist.SetStats(0)
         hist.SetTitle("")
@@ -646,7 +770,7 @@ class PlotterDataMC(PlotterBase):
 
         if final_state_label:
             self._draw_region_label(canvas, final_state_label, x_pos=0.4, y_pos=0.93, textsize=0.05, plot_type="datamc")
-        
+
         # Draw bottom pad (ratio) only if data is available
         if data_hist:
             pad2.cd()
@@ -726,10 +850,15 @@ class PlotterDataMC(PlotterBase):
     
     def _get_background_color_index(self, filename):
         """Get the color index for a specific background based on physics process."""
+        import re
         from src.utils import parse_background_name
-        
+
+        def _normalize(s):
+            # Pad + with spaces and collapse whitespace so "W+jets" == "W + jets"
+            return re.sub(r'\s+', ' ', re.sub(r'\s*\+\s*', ' + ', s)).strip()
+
         bg_name = parse_background_name(filename)
-        
+
         # Background to color mapping (using original hex color indices)
         # QCD=purple, WJets=teal, ZJets=yellow/gold, TTX=red/orange, GJets=pink/rose
         background_color_map = {
@@ -744,8 +873,14 @@ class PlotterDataMC(PlotterBase):
             'Diboson': 1185,              # #2E8B57 - Sea green
             'Single top': 1186,           # #8B4513 - Saddle brown
         }
-        
-        return background_color_map.get(bg_name, 1179)  # Default to purple if not found
+
+        # Try parsed name first, then raw filename (handles YAML group names like "W+jets")
+        for candidate in [bg_name, filename]:
+            color = background_color_map.get(_normalize(candidate))
+            if color is not None:
+                return color
+
+        return 1179  # Default to purple if not found
 
     def _ensure_mc_colors(self):
         """Force recreation of MC colors at specific indices to override palette interference."""

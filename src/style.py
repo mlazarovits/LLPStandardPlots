@@ -1,5 +1,9 @@
 import ROOT
-import cmsstyle as CMS
+try:
+    import cmsstyle as CMS
+    _CMS_AVAILABLE = True
+except ImportError:
+    _CMS_AVAILABLE = False
 
 class StyleManager:
     """Manages CMS plotting style configuration."""
@@ -59,9 +63,18 @@ class StyleManager:
 
     def set_style(self):
         """Apply global CMS style settings."""
-        CMS.SetExtraText("Preliminary")
-        CMS.SetLumi(self.luminosity)
-        CMS.SetEnergy(self.com)
+        #CMS.SetExtraText("Preliminary")
+        #CMS.SetLumi(self.luminosity)
+        #CMS.SetEnergy(self.com)
+        if _CMS_AVAILABLE:
+            CMS.setCMSStyle()
+            CMS.SetExtraText("Preliminary")
+            CMS.SetLumi(self.luminosity)
+        else:
+            ROOT.gStyle.SetPadTickX(1)
+            ROOT.gStyle.SetPadTickY(1)
+            ROOT.gStyle.SetHatchesLineWidth(2)
+            ROOT.gStyle.SetHatchesSpacing(1.3)
         ROOT.gROOT.SetBatch(True)
     
     def reset_palette_for_1d(self):
@@ -122,9 +135,10 @@ class StyleManager:
         plot_type: "1d", "2d", "datamc", or "default"
         Returns latex objects to keep alive.
         """
-        # Check if we need TMathText rendering for any symbols
-        has_ell = "\\ell\\ell" in label
-        has_hh = "hh" in label
+        # Only use TMathText symbol rendering for standard region labels
+        is_region_label = label.startswith("Region:")
+        has_ell = is_region_label and "\\ell\\ell" in label
+        has_hh = is_region_label and "hh" in label
         
         if has_ell or has_hh:
             # Split approach: draw main label with placeholders, then overlay symbols
@@ -140,7 +154,7 @@ class StyleManager:
             main_latex.SetTextSize(textsize)
             main_latex.SetTextFont(42)
             main_latex.SetTextAlign(11)  # Left aligned
-            main_text = f"{main_label}"
+            main_text = main_label
             main_latex.DrawLatex(x_pos, y_pos, main_text)
             
             latex_objects = [main_latex]
@@ -189,5 +203,5 @@ class StyleManager:
             fs_latex.SetTextSize(textsize)
             fs_latex.SetTextFont(42)
             fs_latex.SetTextAlign(11)  # Left aligned
-            fs_latex.DrawLatex(x_pos, y_pos, f"{label}")
+            fs_latex.DrawLatex(x_pos, y_pos, label)
             return fs_latex

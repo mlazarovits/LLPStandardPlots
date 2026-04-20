@@ -5,5 +5,11 @@ __pycache__/
 *~
 *.png
 *.pdf
+<<<<<<< HEAD
+=======
+*.eps
+*.root
+
+>>>>>>> ea01415d9dd2a25fa2c236d2669731f000e4661c
 # macOS Finder metadata
 .DS_Store
