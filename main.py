@@ -250,8 +250,6 @@ def parse_arguments():
     # Output Format Options
     parser.add_argument('--format', choices=['root', 'pdf', 'png', 'eps'], default='root',
                        help='Output format: root (default), pdf, png, or eps')
-    parser.add_argument('-j', '--workers', type=int, default=None,
-                        help='Parallel file-loading workers (default: auto)')
     parser.add_argument('--save-hists', action='store_true', default=False,
                        help='(ROOT format only) Also write individual histogram objects alongside canvases')
     
@@ -353,8 +351,7 @@ def main():
     style.set_style()
 
     loader = DataLoader(args.tree, luminosity=args.lumi,
-                       analysis_mode=analysis_mode, isr_pt_cut=isr_pt_cut,
-                       max_workers=args.workers)
+                       analysis_mode=analysis_mode, isr_pt_cut=isr_pt_cut)
     plotter1d = Plotter1D(style)
     plotter2d = Plotter2D(style)
     plotter_datamc = PlotterDataMC(style)
@@ -500,7 +497,7 @@ def main():
                 cr_data_collection = custom_data_data_map.get(data_flag_key, {})
 
         # --- Data/MC Comparison Plots (FIRST to avoid palette interference) ---
-        if args.data and ('ratio' in args.plots or 'all' in args.plots):
+        if all_data_files and ('ratio' in args.plots or 'all' in args.plots):
             print("  Generating Data/MC Comparison Plots...")
             datamc_subdir = f"{folder_name}/datamc_plots"
             

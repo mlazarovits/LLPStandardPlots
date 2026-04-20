@@ -1,15 +1,8 @@
 import uproot
 import numpy as np
-import concurrent.futures
-import os
 from src.selections import SelectionManager
 from src.config import AnalysisConfig, AnalysisMode, ModeConfig
 
-
-def _load_file_task(args):
-    """Module-level worker for ProcessPoolExecutor — loads one file."""
-    loader, file_path, branches, event_flags, custom_cuts, is_data = args
-    return loader._load_one_file(file_path, branches, event_flags, custom_cuts, is_data)
 
 
 def _merge_chunks(chunks):
@@ -24,12 +17,11 @@ def _merge_chunks(chunks):
 
 class DataLoader:
     def __init__(self, tree_name='kuSkimTree', luminosity=400,
-                 analysis_mode='uncompressed', isr_pt_cut=None, max_workers=None):
+                 analysis_mode='uncompressed', isr_pt_cut=None):
         self.tree_name = tree_name
         self.luminosity = luminosity
         self.analysis_mode = analysis_mode
         self.isr_pt_cut = isr_pt_cut
-        self.max_workers = max_workers
         self.selection_manager = SelectionManager()
         self.loading_summary = {
             'data_types_loaded': set(),
@@ -245,20 +237,8 @@ class DataLoader:
         event_data = {flag: {} for flag in event_flags}
         custom_data = {f"CustomRegion{i+1}": {} for i in range(len(custom_cuts))}
         
-        n_workers = min(self.max_workers or (os.cpu_count() or 4), len(file_paths), 8)
-
-        if len(file_paths) > 1 and n_workers > 1:
-            tasks = [(self, fp, branches, event_flags, custom_cuts, is_data) for fp in file_paths]
-            try:
-                with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
-                    results = list(executor.map(_load_file_task, tasks))
-            except Exception as e:
-                print(f"Warning: parallel loading failed ({e}), falling back to sequential")
-                results = [self._load_one_file(fp, branches, event_flags, custom_cuts, is_data)
-                           for fp in file_paths]
-        else:
-            results = [self._load_one_file(fp, branches, event_flags, custom_cuts, is_data)
-                       for fp in file_paths]
+        results = [self._load_one_file(fp, branches, event_flags, custom_cuts, is_data)
+                   for fp in file_paths]
 
         for file_path, file_event, file_custom in results:
             for flag, fdata in file_event.items():
