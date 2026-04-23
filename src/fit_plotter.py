@@ -8,8 +8,12 @@ from src.style import StyleManager
 # ── Bin label tables ──────────────────────────────────────────────────────────
 
 RISR_LABELS = {
-    "00": "[0.7, 0.8)",
-    "10": "[0.8, 0.9)",
+    #"00": "[0.7, 0.8)",
+    "00": "[0., 0.3)",
+    "10": "[0., 0.3)",
+    "01": "#geq 0.3",
+    "11": "#geq 0.3",
+    "22": "#geq 0.4",
     "20": "#geq 0.9",
 }
 
@@ -23,13 +27,12 @@ MSRS_RS_LABELS = {
 }
 
 MS_DELAYED_LABELS = {
-    "00": "[0.7, 1)",
-    "10": "#geq 1",
+    "00": "#geq 2000",
 }
 
 COMBINED_MS_DELAYED_LABELS = {
-    "00": "M_{S}^{CR}",
-    "10": "M_{S}^{SR}",
+    "00": "#geq 2000",
+    #"10": "M_{S}^{SR}",
 }
 
 CHANNEL_LABELS = {
@@ -44,10 +47,15 @@ CHANNEL_LABELS = {
     "Ch7CRHadLow":        "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [100, 600)",
     "Ch8CRHadHigh":       "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [600, 1000)",
     # Uncompressed ABCD
-    "Ch1CRPhoBHEarly":    "BH #gamma, early timing",
-    "Ch2CRPhoBHLate":     "BH #gamma, late timing",
-    "Ch3CRPhonotBHEarly": "Non-BH #gamma, early timing",
-    "Ch4CRPhonotBHLate":  "Non-BH #gamma, late timing",
+    "Ch1CRgeq1PhoBHEarly":    "BH #gamma, early timing",
+    "Ch2CRgeq1PhoBHLate":     "BH #gamma, late timing",
+    "Ch3CRgeq1PhoNotBHEarly": "Non-BH #gamma, early timing",
+    "Ch4CRgeq1PhoNotBHLate":  "Non-BH #gamma, late timing",
+    "Ch5CRgeq1PhoMedIsoPromptBin":  "Med Iso #geq 1 #gamma",
+    "Ch5CReq2PhoMedIsoPromptBin":  "Med Iso 2 #gamma",
+    "Ch6SReq1PhoTightIsoPromptBin": "Tight Iso 1 #gamma",
+    "Ch6SReq2PhoTightIsoPromptBin": "Tight Iso 2 #gamma",
+
 }
 
 # Compact labels used only in the combined plot where space is tight.
@@ -122,65 +130,66 @@ class FitPlotter:
 
         bin_scheme     = "msrs" if cfg.mode == "uncompressed" else "risr"
         shape_all_bins = [b for _, bins in cfg.shape_bin_order for b in bins]
+        # Collect (canvas_pre, canvas_post, short_name) for all plots, then
+        # flush to a single ROOT file or individual image files at the end.
+        plots = []
+        pre_shape = None
+        post_shape = None
+        if len(shape_all_bins) > 0:
+            pre_shape  = self._extract_yields(f, "shapes_prefit", shape_all_bins)
+            post_shape = self._extract_yields(f, "shapes_fit_b",  shape_all_bins)
 
-        pre_shape  = self._extract_yields(f, "shapes_prefit", shape_all_bins)
-        post_shape = self._extract_yields(f, "shapes_fit_b",  shape_all_bins)
 
+
+            # ── comprehensive shape_transfer ──────────────────────────────────────
+            shape_deco = self._build_decorations(cfg.shape_bin_order, bin_scheme)
+            plots.append((
+                self._draw_standard_canvas(*pre_shape,  shape_deco, f"shp_pre_{_uid()}",  "Prefit"),
+                self._draw_standard_canvas(*post_shape, shape_deco, f"shp_pst_{_uid()}", "Postfit"),
+                "shape",
+            ))
+
+            # ── per-pair plots ────────────────────────────────────────────────────
+            for anchor_ch, buoy_chs in cfg.shape_pairs.items():
+                anchor_bins = dict(cfg.shape_bin_order)[anchor_ch]
+                for buoy_ch in buoy_chs:
+                    buoy_bins = dict(cfg.shape_bin_order)[buoy_ch]
+                    ai = shape_all_bins.index(anchor_bins[0])
+                    bi = shape_all_bins.index(buoy_bins[0])
+                    na, nb = len(anchor_bins), len(buoy_bins)
+
+                    a_pre  = tuple(arr[ai:ai+na] for arr in pre_shape)
+                    a_post = tuple(arr[ai:ai+na] for arr in post_shape)
+                    b_pre  = tuple(arr[bi:bi+nb] for arr in pre_shape)
+                    b_post = tuple(arr[bi:bi+nb] for arr in post_shape)
+
+                    tag       = f"{self._ch_short(anchor_ch)}_{self._ch_short(buoy_ch)}"
+                    pair_ord  = [(anchor_ch, anchor_bins), (buoy_ch, buoy_bins)]
+                    pair_deco = self._build_decorations(pair_ord, bin_scheme)
+                    tog_pre   = tuple(np.concatenate([a, b]) for a, b in zip(a_pre,  b_pre))
+                    tog_post  = tuple(np.concatenate([a, b]) for a, b in zip(a_post, b_post))
+
+                    plots.append((
+                        self._draw_standard_canvas(*tog_pre,  pair_deco, f"tog_pre_{_uid()}",  "Prefit"),
+                        self._draw_standard_canvas(*tog_post, pair_deco, f"tog_pst_{_uid()}", "Postfit"),
+                        f"pair_{tag}_together",
+                    ))
+
+                    a_deco = self._build_decorations([(anchor_ch, anchor_bins)], bin_scheme)
+                    b_deco = self._build_decorations([(buoy_ch,   buoy_bins)],   bin_scheme)
+                    plots.append((
+                        self._draw_sidebyside_canvas(*a_pre,  *b_pre,  a_deco, b_deco,
+                                                     f"sbs_pre_{_uid()}",  "Prefit"),
+                        self._draw_sidebyside_canvas(*a_post, *b_post, a_deco, b_deco,
+                                                     f"sbs_pst_{_uid()}", "Postfit"),
+                        f"pair_{tag}_sidebyside",
+                    ))
+
+        # ── ABCD plots (uncompressed only) ────────────────────────────────────
         if cfg.abcd_bin_order:
             abcd_all_bins = [b for _, bins in cfg.abcd_bin_order for b in bins]
             pre_abcd  = self._extract_yields(f, "shapes_prefit", abcd_all_bins)
             post_abcd = self._extract_yields(f, "shapes_fit_b",  abcd_all_bins)
-
-        # Collect (canvas_pre, canvas_post, short_name) for all plots, then
-        # flush to a single ROOT file or individual image files at the end.
-        plots = []
-
-        # ── comprehensive shape_transfer ──────────────────────────────────────
-        shape_deco = self._build_decorations(cfg.shape_bin_order, bin_scheme)
-        plots.append((
-            self._draw_standard_canvas(*pre_shape,  shape_deco, f"shp_pre_{_uid()}",  "Prefit"),
-            self._draw_standard_canvas(*post_shape, shape_deco, f"shp_pst_{_uid()}", "Postfit"),
-            "shape",
-        ))
-
-        # ── per-pair plots ────────────────────────────────────────────────────
-        for anchor_ch, buoy_chs in cfg.shape_pairs.items():
-            anchor_bins = dict(cfg.shape_bin_order)[anchor_ch]
-            for buoy_ch in buoy_chs:
-                buoy_bins = dict(cfg.shape_bin_order)[buoy_ch]
-                ai = shape_all_bins.index(anchor_bins[0])
-                bi = shape_all_bins.index(buoy_bins[0])
-                na, nb = len(anchor_bins), len(buoy_bins)
-
-                a_pre  = tuple(arr[ai:ai+na] for arr in pre_shape)
-                a_post = tuple(arr[ai:ai+na] for arr in post_shape)
-                b_pre  = tuple(arr[bi:bi+nb] for arr in pre_shape)
-                b_post = tuple(arr[bi:bi+nb] for arr in post_shape)
-
-                tag       = f"{self._ch_short(anchor_ch)}_{self._ch_short(buoy_ch)}"
-                pair_ord  = [(anchor_ch, anchor_bins), (buoy_ch, buoy_bins)]
-                pair_deco = self._build_decorations(pair_ord, bin_scheme)
-                tog_pre   = tuple(np.concatenate([a, b]) for a, b in zip(a_pre,  b_pre))
-                tog_post  = tuple(np.concatenate([a, b]) for a, b in zip(a_post, b_post))
-
-                plots.append((
-                    self._draw_standard_canvas(*tog_pre,  pair_deco, f"tog_pre_{_uid()}",  "Prefit"),
-                    self._draw_standard_canvas(*tog_post, pair_deco, f"tog_pst_{_uid()}", "Postfit"),
-                    f"pair_{tag}_together",
-                ))
-
-                a_deco = self._build_decorations([(anchor_ch, anchor_bins)], bin_scheme)
-                b_deco = self._build_decorations([(buoy_ch,   buoy_bins)],   bin_scheme)
-                plots.append((
-                    self._draw_sidebyside_canvas(*a_pre,  *b_pre,  a_deco, b_deco,
-                                                 f"sbs_pre_{_uid()}",  "Prefit"),
-                    self._draw_sidebyside_canvas(*a_post, *b_post, a_deco, b_deco,
-                                                 f"sbs_pst_{_uid()}", "Postfit"),
-                    f"pair_{tag}_sidebyside",
-                ))
-
-        # ── ABCD plots (uncompressed only) ────────────────────────────────────
-        if cfg.abcd_bin_order:
             abcd_flat_deco = self._build_decorations(cfg.abcd_bin_order, "ms_delayed")
             plots.append((
                 self._draw_standard_canvas(*pre_abcd,  abcd_flat_deco, f"abf_pre_{_uid()}",  "Prefit"),
@@ -195,15 +204,15 @@ class FitPlotter:
                 self._draw_standard_canvas(*post_abcd, abcd_grid_deco, f"abg_pst_{_uid()}", "Postfit"),
                 "abcd_grid",
             ))
-
-            comb_deco  = self._build_combined_decorations(cfg.abcd_bin_order, cfg.shape_bin_order, sr_ch=sr_ch)
-            comb_pre   = tuple(np.concatenate([a, s]) for a, s in zip(pre_abcd,  pre_shape))
-            comb_post  = tuple(np.concatenate([a, s]) for a, s in zip(post_abcd, post_shape))
-            plots.append((
-                self._draw_standard_canvas(*comb_pre,  comb_deco, f"cmb_pre_{_uid()}",  "Prefit",  right_panel=True),
-                self._draw_standard_canvas(*comb_post, comb_deco, f"cmb_pst_{_uid()}", "Postfit", right_panel=True),
-                "combined",
-            ))
+            if pre_shape is not None and post_shape is not None:
+                comb_deco  = self._build_combined_decorations(cfg.abcd_bin_order, cfg.shape_bin_order, sr_ch=sr_ch)
+                comb_pre   = tuple(np.concatenate([a, s]) for a, s in zip(pre_abcd,  pre_shape))
+                comb_post  = tuple(np.concatenate([a, s]) for a, s in zip(post_abcd, post_shape))
+                plots.append((
+                    self._draw_standard_canvas(*comb_pre,  comb_deco, f"cmb_pre_{_uid()}",  "Prefit",  right_panel=True),
+                    self._draw_standard_canvas(*comb_post, comb_deco, f"cmb_pst_{_uid()}", "Postfit", right_panel=True),
+                    "combined",
+                ))
 
         self._flush(plots, output_prefix, output_format)
 
@@ -214,13 +223,20 @@ class FitPlotter:
             cfg = yaml.safe_load(fh)
 
         stf            = cfg.get("shape_transfer_fit", {})
-        shape_bin_ass  = stf.get("bin_association",    {})
-        shape_ch_ass   = stf.get("channel_association", {})
-        anchor_bin     = stf.get("anchor_bin", "00")
+        shape_bin_ass  = {} 
+        shape_ch_ass   = {} 
+        anchor_bin     = None 
+        if stf is not None:
+            shape_bin_ass  = stf.get("bin_association",    {})
+            shape_ch_ass   = stf.get("channel_association", {})
+            anchor_bin     = stf.get("anchor_bin", "00")
 
         abcd           = cfg.get("ABCD_fit") or {}
-        abcd_bin_ass   = abcd.get("bin_association",    {})
-        abcd_ch_ass    = abcd.get("channel_association", {})
+        abcd_bin_ass   = {} 
+        abcd_ch_ass    = {} 
+        if abcd is not None:
+            abcd_bin_ass   = abcd.get("bin_association",    {})
+            abcd_ch_ass    = abcd.get("channel_association", {})
 
         mode = mode_override or self._detect_mode(cfg)
 
@@ -234,7 +250,10 @@ class FitPlotter:
         )
 
     def _detect_mode(self, cfg):
-        assoc = cfg.get("shape_transfer_fit", {}).get("bin_association", {})
+        assoc = cfg.get("shape_transfer_fit", {})
+        if assoc is None:
+            return "uncompressed"
+        assoc = assoc.get("bin_association", {})
         if not assoc:
             return "compressed"
         n = len(next(iter(assoc.values())))
