@@ -9,11 +9,14 @@ from src.style import StyleManager
 
 RISR_LABELS = {
     #"00": "[0.7, 0.8)",
-    "00": "[0., 0.3)",
-    "10": "[0., 0.3)",
+    "00": "< 0.3",
+    "10": "< 0.3",
     "01": "#geq 0.3",
     "11": "#geq 0.3",
     "22": "#geq 0.4",
+    "12": "#geq 0.4",
+    "02": "#geq 0.4",
+    "21": "[0.3, 0.35)",
     "20": "#geq 0.9",
 }
 
@@ -51,9 +54,15 @@ CHANNEL_LABELS = {
     "Ch2CRgeq1PhoBHLate":     "BH #gamma, late timing",
     "Ch3CRgeq1PhoNotBHEarly": "Non-BH #gamma, early timing",
     "Ch4CRgeq1PhoNotBHLate":  "Non-BH #gamma, late timing",
+    "Ch1CRgeq1PhoBHEarlyDxyHadLow":    "Early BH #gamma, #geq 1 SV S^{-}_{xy}",
+    "Ch2CRgeq1PhoBHLateDxyHadLow":     "Late BH #gamma, #geq 1 SV S^{-}_{xy}",
+    "Ch3CRgeq1PhonotBHEarlyDxyHadLow": "Early Non-BH #gamma, #geq 1 SV S^{-}_{xy}",
+    "Ch4CRgeq1PhonotBHLateDxyHadHigh":  "Late Non-BH #gamma, #geq 1 SV S^{+}_{xy}",
     "Ch5CRgeq1PhoMedIsoPromptBin":  "Med Iso #geq 1 #gamma",
+    "Ch5CReq1PhoMedIsoPromptBin":  "Med Iso 1 #gamma",
     "Ch5CReq2PhoMedIsoPromptBin":  "Med Iso 2 #gamma",
     "Ch6SReq1PhoTightIsoPromptBin": "Tight Iso 1 #gamma",
+    "Ch6SReq1PhoVeryTightIsoPromptBin": "Very Tight Iso 1 #gamma",
     "Ch6SReq2PhoTightIsoPromptBin": "Tight Iso 2 #gamma",
 
 }
@@ -861,7 +870,8 @@ class FitPlotter:
 
         is_risr = deco.get("bin_scheme") == "risr"
         lt = ROOT.TLatex(); lt.SetNDC(True)
-        lt.SetTextFont(42); lt.SetTextSize(0.13)
+        #lt.SetTextFont(42); lt.SetTextSize(0.13)
+        lt.SetTextFont(42); lt.SetTextSize(0.09)
         if is_risr:
             lt.SetTextAngle(-20)
             lt.SetTextAlign(12)  # left end at bin left-edge, text slopes down-right into margin
