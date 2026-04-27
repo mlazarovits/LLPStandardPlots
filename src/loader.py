@@ -248,6 +248,56 @@ class DataLoader:
 
         return event_data, custom_data
 
+    def _build_scalar_prefilter(self, custom_cuts, available_branches, tree):
+        """
+        Extract scalar necessary-conditions from custom cuts and return a combined
+        uproot-compatible filter string.
+
+        For each custom cut, split on top-level OR, extract scalar sub-conditions
+        from each AND-clause, then reassemble as OR of AND-clauses.  The result is
+        a necessary (but not sufficient) condition: any event failing it is
+        guaranteed to fail all custom cuts, so it can be dropped before entering
+        Python.
+        """
+        import re
+
+        # Only scalar (non-jagged) branches that are present in the tree can be
+        # pushed down.  We identify them by checking the branch interpretation.
+        scalar_branches = set()
+        for b in available_branches:
+            try:
+                interp = tree[b].interpretation
+                # uproot marks jagged/variable-length branches with a dtype that has
+                # ndim > 0 or via AsJagged; scalars have a flat dtype interpretation.
+                if hasattr(interp, 'dtype') and interp.dtype.ndim == 0:
+                    scalar_branches.add(b)
+            except Exception:
+                pass
+
+        if not scalar_branches:
+            return None
+
+        cond_re = re.compile(
+            r'\b(' + '|'.join(re.escape(b) for b in sorted(scalar_branches, key=len, reverse=True)) +
+            r')\s*(>=|<=|==|!=|>|<)\s*(-?\d+(?:\.\d+)?)')
+
+        per_cut_filters = []
+        for cut in custom_cuts:
+            normalized = cut.replace('&&', ' & ').replace('||', ' | ')
+            or_clauses = self._split_respecting_parens(normalized, ' | ')
+
+            clause_filters = []
+            for clause in or_clauses:
+                scalar_conds = cond_re.findall(clause)
+                if scalar_conds:
+                    clause_filters.append(
+                        ' & '.join(f'({v} {op} {val})' for v, op, val in scalar_conds))
+
+            if clause_filters:
+                per_cut_filters.append('(' + ' | '.join(f'({c})' for c in clause_filters) + ')')
+
+        return ' & '.join(per_cut_filters) if per_cut_filters else None
+
     def _load_one_file(self, file_path, branches, event_flags, custom_cuts, is_data):
         """Load and process a single file in chunks to bound memory usage."""
         CHUNK_SIZE = 100_000
@@ -266,6 +316,15 @@ class DataLoader:
                 available_branches = [b for b in branches if b in tree]
                 cut_expr = (f"(selCMet > {AnalysisConfig.MET_CUT}) &"
                             f" (evtFillWgt < {AnalysisConfig.EVT_WGT_CUT})")
+
+                # Push scalar conditions from custom cuts into uproot's C++-level filter.
+                # e.g. "((SV_nHadronic>=1) & ...) | ((SV_nLeptonic>=1) & ...)" yields
+                # "(SV_nHadronic>=1) | (SV_nLeptonic>=1)" which is a necessary precondition
+                # that eliminates the vast majority of events before they enter Python.
+                scalar_prefilter = self._build_scalar_prefilter(
+                    custom_cuts, available_branches, tree)
+                if scalar_prefilter:
+                    cut_expr = f"({cut_expr}) & ({scalar_prefilter})"
 
                 event_chunks = {flag: [] for flag in event_flags}
                 custom_chunks = {f"CustomRegion{i+1}": [] for i in range(len(custom_cuts))}
@@ -444,7 +503,10 @@ class DataLoader:
                         extracted_data[f'{var_key}_weights'].append(base_weight)
 
                 elif var_key.startswith('HadronicSV_') or var_key.startswith('LeptonicSV_'):
-                    # SV variables: flatten jagged arrays - one entry per SV object
+                    # Compressed mode only uses scalar ISR variables for plotting;
+                    # skipping SV flattening avoids GB-scale accumulation on large data files.
+                    if self.analysis_mode == AnalysisMode.COMPRESSED:
+                        continue
                     sv_array = data[var_key][idx]
                     for sv_val in sv_array:
                         scaled_val = sv_val * var_config['scale']
@@ -452,7 +514,8 @@ class DataLoader:
                         extracted_data[f'{var_key}_weights'].append(base_weight)
 
                 elif var_key.startswith('baseLinePhoton_'):
-                    # Photon variables: flatten jagged arrays - one entry per photon object
+                    if self.analysis_mode == AnalysisMode.COMPRESSED:
+                        continue
                     photon_array = data[var_key][idx]
                     for ph_val in photon_array:
                         scaled_val = ph_val * var_config['scale']
