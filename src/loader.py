@@ -350,7 +350,15 @@ class DataLoader:
 
                 tree = f[self.tree_name]
                 n_entries = tree.num_entries
-                available_branches = [b for b in branches if b in tree]
+                tree_keys = set(tree.keys())
+                available_branches = [b for b in branches if b in tree_keys]
+                # Warn once if requested photon branches are missing from this tree
+                _pho_requested = {'baseLinePhoton_beamHaloCNNScore', 'baseLinePhoton_WTimeSig',
+                                  'baseLinePhoton_isoANNScore', 'nBaseLinePhotons'}
+                _pho_missing = _pho_requested - tree_keys
+                if _pho_missing and custom_cuts:
+                    print(f"  Note: photon branch(es) absent from tree: {sorted(_pho_missing)}")
+                    print(f"  Available photon-like keys: {sorted(k for k in tree_keys if 'oto' in k or 'Pho' in k)[:10]}")
                 cut_expr = (f"(selCMet > {AnalysisConfig.MET_CUT}) &"
                             f" (evtFillWgt < {AnalysisConfig.EVT_WGT_CUT})")
 
