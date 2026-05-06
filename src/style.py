@@ -62,11 +62,51 @@ class StyleManager:
             CMS.SetExtraText("Preliminary")
             CMS.SetLumi(self.luminosity)
         else:
-            ROOT.gStyle.SetPadTickX(1)
-            ROOT.gStyle.SetPadTickY(1)
-            ROOT.gStyle.SetHatchesLineWidth(2)
-            ROOT.gStyle.SetHatchesSpacing(1.3)
+            self._apply_fallback_cms_style()
+        # ForceStyle bakes style into object attributes at draw time so saved
+        # ROOT files don't embed a live style pointer that causes crashes on open.
+        ROOT.gROOT.ForceStyle()
         ROOT.gROOT.SetBatch(True)
+
+    def _apply_fallback_cms_style(self):
+        """Build a CMS-like TStyle when cmsstyle is not installed."""
+        s = ROOT.TStyle("CMSfallback", "CMS-like fallback style")
+        # Canvas / pad
+        s.SetCanvasBorderMode(0)
+        s.SetCanvasColor(ROOT.kWhite)
+        s.SetPadBorderMode(0)
+        s.SetPadColor(ROOT.kWhite)
+        s.SetPadGridX(False)
+        s.SetPadGridY(False)
+        s.SetPadTickX(1)
+        s.SetPadTickY(1)
+        # Margins — match CMS defaults
+        s.SetPadTopMargin(0.07)
+        s.SetPadBottomMargin(0.13)
+        s.SetPadLeftMargin(0.16)
+        s.SetPadRightMargin(0.05)
+        # Fonts: 42=Helvetica, 62=Helvetica-Bold, 52=Helvetica-Oblique
+        s.SetTextFont(42)
+        s.SetTextSize(0.06)
+        for axis in ("x", "y", "z"):
+            s.SetLabelFont(42, axis)
+            s.SetTitleFont(42, axis)
+            s.SetLabelSize(0.05, axis)
+            s.SetTitleSize(0.06, axis)
+        s.SetTitleOffset(0.9, "x")
+        s.SetTitleOffset(1.25, "y")
+        s.SetTitleFont(42)
+        # Remove stat and title boxes
+        s.SetOptStat(0)
+        s.SetOptTitle(0)
+        # Legend
+        s.SetLegendFont(42)
+        s.SetLegendTextSize(0.04)
+        # Hatching
+        s.SetHatchesLineWidth(2)
+        s.SetHatchesSpacing(1.3)
+        ROOT.gROOT.SetStyle("CMSfallback")
+        s.cd()
     
     def reset_palette_for_1d(self):
         """Reset palette to standard colors for 1D/data-MC plots."""
