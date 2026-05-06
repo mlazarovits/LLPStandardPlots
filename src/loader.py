@@ -476,6 +476,12 @@ class DataLoader:
                                                'rjrIsr_nSVisObjects', 'rjrIsr_nIsrVisObjects']:
                                     if isr_var in chunk:
                                         cut_variables[isr_var] = chunk[isr_var]
+                            elif self.analysis_mode == AnalysisMode.UNCOMPRESSED:
+                                for unc_var in ['rjr_Ms', 'rjr_Rs', 'rjrPTS']:
+                                    if unc_var in chunk:
+                                        cut_variables[unc_var] = np.array(
+                                            [float(a[0]) if len(a) > 0 else np.nan
+                                             for a in chunk[unc_var]], dtype=float)
                             custom_mask = self._parse_simple_cut(custom_cut, cut_variables)
                             combined_mask = base_mask & custom_mask
                         except Exception as e:
