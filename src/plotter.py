@@ -8,17 +8,36 @@ except ImportError:
         def cmsCanvas(canvName, x_min, x_max, y_min, y_max, nameXaxis, nameYaxis,
                       square=True, iPos=11, extraSpace=0, with_z_axis=False, **kwargs):
             W = 600 if square else 800
-            canv = ROOT.TCanvas(canvName, canvName, 50, 50, W, 600)
+            H = 600
+            # Mirrors cmsstyle margin conventions (pixel values / canvas dimension)
+            left   = 0.16
+            right  = 0.16 if with_z_axis else 0.04
+            top    = 0.08
+            bottom = 0.12
+
+            canv = ROOT.TCanvas(canvName, canvName, 50, 50, W, H)
             canv.SetFillColor(0)
             canv.SetBorderMode(0)
             canv.SetFrameFillStyle(0)
             canv.SetFrameBorderMode(0)
+            canv.SetLeftMargin(left + extraSpace)
+            canv.SetRightMargin(right + extraSpace)
+            canv.SetTopMargin(top)
+            canv.SetBottomMargin(bottom)
+
             h = canv.DrawFrame(x_min, y_min, x_max, y_max)
             h.GetXaxis().SetTitle(nameXaxis)
+            h.GetXaxis().SetTitleSize(0.05)
+            h.GetXaxis().SetTitleOffset(1.0)
+            h.GetXaxis().SetLabelSize(0.04)
             h.GetYaxis().SetTitle(nameYaxis)
-            h.Draw("AXIS")
-            canv.RedrawAxis()
-            canv.GetFrame().Draw()
+            h.GetYaxis().SetTitleSize(0.05)
+            h.GetYaxis().SetTitleOffset(1.25)
+            h.GetYaxis().SetLabelSize(0.04)
+            h.SetStats(0)
+            h.SetTitle("")
+
+            canv.Update()
             return canv
 
         @staticmethod
