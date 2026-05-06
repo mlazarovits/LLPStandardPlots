@@ -336,14 +336,9 @@ def main():
 
     # Check for unsupported plot types in compressed mode
     if analysis_mode == AnalysisMode.COMPRESSED:
-        if 'ratio' in args.plots or 'unrolled' in args.plots or 'all' in args.plots:
-            print(f"Note: Data/MC ratio and unrolled plots are not yet implemented for compressed mode.")
-            print(f"      Only 1D, 2D, and cr_sig plots will be generated.")
-            # Filter to only supported plot types
-            if 'all' in args.plots:
-                args.plots = ['1d', '2d', 'cr_sig']
-            else:
-                args.plots = [p for p in args.plots if p in ['1d', '2d', 'cr_sig']]
+        if 'unrolled' in args.plots:
+            print(f"Note: Unrolled plots are not yet implemented for compressed mode and will be skipped.")
+            args.plots = [p for p in args.plots if p != 'unrolled']
 
     # Expand input paths to handle directories
     try:
