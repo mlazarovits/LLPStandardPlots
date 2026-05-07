@@ -23,10 +23,12 @@ RISR_LABELS = {
 MSRS_MS_LABELS = {
     "0": "M_{S}^{SR,-}",
     "1": "M_{S}^{SR,+}",
+    "2": "M_{S}^{SR,++}",
 }
 MSRS_RS_LABELS = {
     "0": "R_{S}^{-}",
     "1": "R_{S}^{+}",
+    "2": "R_{S}^{++}",
 }
 
 MS_DELAYED_LABELS = {
@@ -39,6 +41,20 @@ COMBINED_MS_DELAYED_LABELS = {
 }
 
 CHANNEL_LABELS = {
+    #Full NonCompressed Regions
+    "Ch1CRGeLep1": "#geq 1 Lep. SV, S^{-}_{xy}",
+    "Ch2SRGeLep1": "#geq 1 Lep. SV, S^{+}_{xy}",
+    "Ch3CRGeHad1": "#geq 1 Had. SV, S^{-}_{xy}",
+    "Ch4SRGeHad1": "#geq 1 Had. SV, S^{+}_{xy}",
+    "Ch5CRgeq1PhoBHEarlyBin":"BH #gamma, early timing",
+    "Ch6CRgeq1PhoBHLateBin": "BH #gamma, late timing",
+    "Ch7CRgeq1PhoNotBHEarlyBin": "Non-BH #gamma, early timing",
+    "Ch8SRgeq1PhoNotBHLateBin":"Non-BH #gamma, late timing",
+    "Ch8CRgeq1PhoNotBHLateBin":"Non-BH #gamma, late timing (VR)",
+    "Ch9CReq1PhoMedIsoPromptBin":"Med Iso 1 #gamma",
+    "Ch10SReq1PhoTightIsoPromptBin":"Tight Iso 1 #gamma",
+    "Ch11CReq2PhoMedIsoPromptBin":"Med Iso 2 #gamma",
+    "Ch12SReq2PhoTightIsoPromptBin":"Tight Iso 2 #gamma",
     # Compressed shape_transfer
     "Ch1CRHadLow":        "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [100, 600)",
     "Ch2CRHadHigh":       "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [600, 1000)",
@@ -64,7 +80,12 @@ CHANNEL_LABELS = {
     "Ch6SReq1PhoTightIsoPromptBin": "Tight Iso 1 #gamma",
     "Ch6SReq1PhoVeryTightIsoPromptBin": "Very Tight Iso 1 #gamma",
     "Ch6SReq2PhoTightIsoPromptBin": "Tight Iso 2 #gamma",
-
+    "Ch5CReq1PhoMedIsoPromptSVLowDxy":"1 Prompt Med Iso #gamma, #geq 1 SV S^{-}_{xy}",
+    "Ch6SReq1PhoTightIsoPromptSVHighDxy":"1 Prompt Tight Iso #gamma, #geq 1 SV S^{+}_{xy}",
+    "Ch5CReq2PhoMedIsoPromptSVLowDxy":"2 Prompt Med Iso #gamma, #geq 1 SV S^{-}_{xy}",
+    "Ch6SReq2PhoTightIsoPromptSVHighDxy":"2 Prompt Tight Iso #gamma, #geq 1 SV S^{+}_{xy}",
+    "Ch5CRgeq1PhoMedIsoPromptSVLowDxy":"#geq 1 Prompt Med Iso #gamma, #geq 1 SV S^{-}_{xy}",
+    "Ch6SRgeq1PhoTightIsoPromptSVHighDxy":"#geq 1 Tight Iso #gamma, #geq 1 SV S^{+}_{xy}"		
 }
 
 # Compact labels used only in the combined plot where space is tight.
@@ -871,7 +892,8 @@ class FitPlotter:
         is_risr = deco.get("bin_scheme") == "risr"
         lt = ROOT.TLatex(); lt.SetNDC(True)
         #lt.SetTextFont(42); lt.SetTextSize(0.13)
-        lt.SetTextFont(42); lt.SetTextSize(0.09)
+	    #CHANGE BIN LABELS SIZE HERE!!!!
+        lt.SetTextFont(42); lt.SetTextSize(0.1)
         if is_risr:
             lt.SetTextAngle(-20)
             lt.SetTextAlign(12)  # left end at bin left-edge, text slopes down-right into margin
@@ -882,7 +904,7 @@ class FitPlotter:
                 x = left_m + (i / n) * dw          # left edge of bin
             else:
                 x = left_m + ((i + 0.5) / n) * dw  # centre of bin
-            y = y_bin + (0.04 if is_risr else 0.0) + (abcd_y_offset if sect_sep is not None and i < sect_sep else 0.0)
+            y = y_bin + (0.04 if is_risr else -0.05) + (abcd_y_offset if sect_sep is not None and i < sect_sep else 0.0)
             lt.DrawLatex(x, y, label)
 
         objs = [lt]
