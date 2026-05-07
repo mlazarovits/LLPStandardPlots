@@ -1,5 +1,15 @@
 import uproot
 import numpy as np
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable=None, **kwargs):
+        return iterable if iterable is not None else _TqdmDummy()
+
+    class _TqdmDummy:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def update(self, n=1): pass
 from src.selections import SelectionManager
 from src.config import AnalysisConfig, AnalysisMode, ModeConfig
 
@@ -258,9 +268,11 @@ class DataLoader:
                     pool.submit(self._load_one_file, fp, branches, event_flags, custom_cuts, is_data): fp
                     for fp in file_paths
                 }
-                for fut in as_completed(futures):
-                    fp_done, file_event, file_custom = fut.result()
-                    _merge_result(fp_done, file_event, file_custom)
+                with tqdm(total=len(file_paths), unit="file", desc="Loading") as pbar:
+                    for fut in as_completed(futures):
+                        fp_done, file_event, file_custom = fut.result()
+                        _merge_result(fp_done, file_event, file_custom)
+                        pbar.update(1)
         else:
             import gc, ctypes
 
@@ -271,7 +283,7 @@ class DataLoader:
                 except Exception:
                     pass
 
-            for fp in file_paths:
+            for fp in tqdm(file_paths, unit="file", desc="Loading"):
                 file_path, file_event, file_custom = self._load_one_file(
                     fp, branches, event_flags, custom_cuts, is_data)
                 _merge_result(file_path, file_event, file_custom)
