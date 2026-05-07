@@ -164,6 +164,7 @@ class AnalysisConfig:
             'range': (0., 1.),
             'scale': 1.0,
             'is_vector': True
+	},
         # ISR variables (compressed scenario)
         'rjrIsr_Ms': {
             'name': 'isr_ms',
