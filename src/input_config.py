@@ -14,7 +14,11 @@ format: pdf
 output: run2_nhad1
 
 signal:
-  - /eos/.../SMS_*_ct0p1_rjrskim.root
+  - /eos/.../SMS_*_ct0p1_rjrskim.root        # plain path/glob — scale defaults to 1.0
+  - name: SMS ct5
+    scale: 10.0                               # optional per-group weight multiplier
+    files:
+      - /eos/.../SMS_*_ct5_rjrskim.root
 
 background:
   - name: QCD multijets
@@ -22,6 +26,7 @@ background:
       - /eos/.../QCD_R18_*
   - name: EWK combined
     combine: true
+    scale: 1.3        # optional per-group weight multiplier (applied to all events)
     files:
       - /eos/.../WJets_R18_*
       - /eos/.../ZJets_R18_*
@@ -61,6 +66,7 @@ _PARSER_DEFAULTS = {
     'tree': 'kuSkimTree',
     'flags': ['passNHad1SelectionSRTight', 'passNLep1SelectionSRTight'],
     'plots': ['all'],
+    'analysis_type': 'uncompressed',
 }
 
 
@@ -80,11 +86,11 @@ def _expand_globs(patterns, base_dir=None):
 def _parse_groups(entries, base_dir=None):
     """
     Parse a YAML list of file entries into group dicts:
-        {name: str|None, files: [str], combine: bool}
+        {name: str|None, files: [str], combine: bool, scale: float}
 
     Each entry may be:
       - a plain string  → treated as a single path/glob, no name, no combine
-      - a dict          → may have 'name', 'files' (str or list), 'combine'
+      - a dict          → may have 'name', 'files' (str or list), 'combine', 'scale'
     """
     groups = []
     for entry in entries:
@@ -93,6 +99,7 @@ def _parse_groups(entries, base_dir=None):
                 'name': None,
                 'files': _expand_globs([entry], base_dir),
                 'combine': False,
+                'scale': 1.0,
             })
         elif isinstance(entry, dict):
             raw = entry.get('files', [])
@@ -103,8 +110,22 @@ def _parse_groups(entries, base_dir=None):
                 'name': name,
                 'files': _expand_globs(raw, base_dir),
                 'combine': entry.get('combine', name is not None),
+                'scale': float(entry.get('scale', 1.0)),
             })
     return groups
+
+
+def _apply_scale(data_dict, scale):
+    """Return a new dict with all weight arrays multiplied by scale."""
+    if scale == 1.0:
+        return data_dict
+    result = {}
+    for key, val in data_dict.items():
+        if key == 'weights' or key.endswith('_weights'):
+            result[key] = val * scale
+        else:
+            result[key] = val
+    return result
 
 
 def load_input_config(yaml_path):
@@ -113,8 +134,9 @@ def load_input_config(yaml_path):
 
     Returns a dict with:
       signal_files  -- flat list of expanded signal file paths
-      bg_groups     -- list of {name, files, combine} dicts
-      data_groups   -- list of {name, files, combine} dicts
+      signal_groups -- list of {name, files, combine, scale} dicts for signal
+      bg_groups     -- list of {name, files, combine, scale} dicts
+      data_groups   -- list of {name, files, combine, scale} dicts
       overrides     -- dict of optional CLI-level overrides (lumi, energy, …)
     """
     with open(yaml_path) as f:
@@ -122,20 +144,44 @@ def load_input_config(yaml_path):
 
     base_dir = cfg.get('base_dir', None)
 
-    # Signal: flat list of paths/globs (no grouping for signals)
+    # Signal: supports the same group syntax as background (name, files, scale, combine)
     raw_signal = cfg.get('signal', [])
     if isinstance(raw_signal, str):
         raw_signal = [raw_signal]
-    signal_files = _expand_globs(raw_signal, base_dir)
+    signal_groups = _parse_groups(raw_signal, base_dir)
+    signal_files = [f for g in signal_groups for f in g['files']]
 
     bg_groups = _parse_groups(cfg.get('background', []), base_dir)
     data_groups = _parse_groups(cfg.get('data', []), base_dir)
 
-    override_keys = ('lumi', 'energy', 'flags', 'plots', 'format', 'output', 'tree')
+    override_keys = ('lumi', 'energy', 'plots', 'output', 'tree', 'analysis_type', 'isr_pt_cut')
     overrides = {k: cfg[k] for k in override_keys if k in cfg}
+
+    # format: accept "pdf" or ["pdf", "root"] — always store as list
+    if 'format' in cfg:
+        raw_fmt = cfg['format']
+        overrides['format'] = [raw_fmt] if isinstance(raw_fmt, str) else list(raw_fmt)
+
+    # Parse flags — each entry may be a plain string or {cut: "...", blind: true, region_type: "sv"|"pho"}
+    raw_flags = cfg.get('flags', None)
+    if raw_flags is not None:
+        flag_strings, blind_cuts, region_types = [], [], []
+        for entry in raw_flags:
+            if isinstance(entry, str):
+                flag_strings.append(entry)
+                blind_cuts.append(False)
+                region_types.append(None)
+            elif isinstance(entry, dict):
+                flag_strings.append(entry['cut'])
+                blind_cuts.append(bool(entry.get('blind', False)))
+                region_types.append(entry.get('region_type', None))
+        overrides['flags'] = flag_strings
+        overrides['blind_cuts'] = blind_cuts
+        overrides['region_types'] = region_types
 
     return {
         'signal_files': signal_files,
+        'signal_groups': signal_groups,
         'bg_groups': bg_groups,
         'data_groups': data_groups,
         'overrides': overrides,
@@ -185,14 +231,15 @@ def assemble_grouped_map(flat_map, groups, combine_fn):
     for region, file_data in flat_map.items():
         result[region] = {}
         for group in groups:
+            scale = group.get('scale', 1.0)
             if group['combine']:
                 subset = {f: file_data[f] for f in group['files'] if f in file_data}
                 if subset:
                     merged = combine_fn(subset)
                     if merged:
-                        result[region][group['name']] = merged
+                        result[region][group['name']] = _apply_scale(merged, scale)
             else:
                 for f in group['files']:
                     if f in file_data:
-                        result[region][f] = file_data[f]
+                        result[region][f] = _apply_scale(file_data[f], scale)
     return result

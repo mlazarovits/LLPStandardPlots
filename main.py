@@ -163,6 +163,23 @@ def _write_hists_from_pad(pad):
             prim.Write()
 
 
+def _write_palette_setup(f_out):
+    """
+    Write a TMacro named 'setup' to the ROOT file that restores the kViridis
+    color palette when sourced.  Without this, TPaletteAxis objects in saved
+    2D canvases crash on open in a fresh ROOT session because the palette
+    TColor indices no longer exist.
+
+    Usage after opening the file:
+        root [0] f->Get("setup")->Exec()   // restores palette
+        root [1] f->Get("my_canvas")->Draw()
+    """
+    macro = ROOT.TMacro("setup")
+    macro.AddLine("gStyle->SetPalette(kViridis);")
+    f_out.cd()
+    macro.Write()
+
+
 def save_canvas(canvas, output_format, f_out=None, output_dir=None, subdir_path="", canvas_name=None, save_hists=False):
     """
     Save canvas in the specified format.
@@ -201,6 +218,39 @@ def is_signal_region(flag_string):
     # SR = Signal Region (blind data), CR = Control Region (show data)
     return 'SR' in flag_string
 
+def _is_sv_region(flag):
+    """Return True for any SV-based selection flag (hadronic or leptonic)."""
+    return "NHad" in flag or "NLep" in flag
+
+def _merge_qcd_gjets(bg_data, combine_fn):
+    """Merge GJets entries into QCD for SV region plots.
+
+    Both processes appear together under the QCD label/color in the legend.
+    Only merges when both QCD and GJets entries are present.
+    """
+    qcd_keys, gjets_keys, other = [], [], {}
+    for key, data in bg_data.items():
+        parsed = parse_background_name(key)
+        if parsed == "QCD multijets":
+            qcd_keys.append(key)
+        elif "gamma" in parsed:
+            gjets_keys.append(key)
+        else:
+            other[key] = data
+
+    if not qcd_keys or not gjets_keys:
+        return bg_data  # Nothing to merge if either is absent
+
+    to_merge = {k: bg_data[k] for k in qcd_keys + gjets_keys}
+    merged = combine_fn(to_merge)
+    if merged is None:
+        return bg_data
+
+    # Keep the first QCD key so downstream name/color lookup stays correct
+    result = {qcd_keys[0]: merged}
+    result.update(other)
+    return result
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Standard Plots CLI')
     
@@ -232,6 +282,10 @@ def parse_arguments():
                        help='Analysis type: uncompressed (default) or compressed')
     parser.add_argument('--isr-pt-cut', type=float, default=None,
                        help='Minimum pT(ISR) cut in GeV (compressed mode only). Default: 700 when compressed mode is used.')
+    parser.add_argument('--workers', type=int, default=1,
+                       help='Number of parallel worker processes for file loading (default: 1)')
+    parser.add_argument('--verbose', action='store_true', default=False,
+                       help='Print per-file loading details (entries, cuts, RSS)')
     parser.add_argument('--lumi', type=float, default=400.0, help='Integrated luminosity in fb^-1 (default: 400)')
     parser.add_argument('--energy', type=float, default=13.6, help='Centre-of-mass energy in TeV (default: 13.6)')
     parser.add_argument('--unblind', action='store_true', help='Bypass data blinding (shows data in all regions including signal regions)')
@@ -252,7 +306,9 @@ def parse_arguments():
                        help='Output format: root (default), pdf, png, or eps')
     parser.add_argument('--save-hists', action='store_true', default=False,
                        help='(ROOT format only) Also write individual histogram objects alongside canvases')
-    
+    parser.add_argument('--no-merge-qcd-gjets', action='store_true', default=False,
+                       help='Disable automatic QCD+GJets merging in SV regions (merging is on by default for SV flags)')
+
     return parser.parse_args()
 
 def main():
@@ -261,11 +317,13 @@ def main():
     # Load YAML input config if provided
     bg_groups = None
     data_groups = None
+    signal_groups = None
     if args.input_config:
         config = load_input_config(args.input_config)
         apply_config_to_args(args, config['overrides'])
         if not args.signal:
             args.signal = config['signal_files']
+            signal_groups = config['signal_groups']
         if not args.background:
             bg_groups = config['bg_groups']
         if not args.data:
@@ -295,18 +353,15 @@ def main():
 
     # Check for unsupported plot types in compressed mode
     if analysis_mode == AnalysisMode.COMPRESSED:
-        if 'ratio' in args.plots or 'unrolled' in args.plots or 'all' in args.plots:
-            print(f"Note: Data/MC ratio and unrolled plots are not yet implemented for compressed mode.")
-            print(f"      Only 1D, 2D, and cr_sig plots will be generated.")
-            # Filter to only supported plot types
-            if 'all' in args.plots:
-                args.plots = ['1d', '2d', 'cr_sig']
-            else:
-                args.plots = [p for p in args.plots if p in ['1d', '2d', 'cr_sig']]
+        if 'unrolled' in args.plots:
+            print(f"Note: Unrolled plots are not yet implemented for compressed mode and will be skipped.")
+            args.plots = [p for p in args.plots if p != 'unrolled']
 
     # Expand input paths to handle directories
     try:
         signal_files = expand_input_paths(args.signal)
+        if signal_groups is None:
+            signal_groups = [{'name': None, 'files': signal_files, 'combine': False, 'scale': 1.0}]
         if bg_groups is None:
             bg_groups = [{'name': None, 'files': expand_input_paths(args.background) if args.background else [], 'combine': False}]
         if data_groups is None:
@@ -325,33 +380,38 @@ def main():
             return
 
     # Handle output format and smart file naming
-    output_format = args.format
+    # Normalize to list (CLI gives a string; YAML may give a list)
+    if isinstance(args.format, str):
+        args.format = [args.format]
+    output_formats = args.format
     output_path = args.output
 
-    if output_format == 'root':
-        # For ROOT format: handle smart .root extension
-        if not output_path.endswith('.root'):
-            output_path = f"{output_path}.root"
-        # Will create a ROOT file
-        use_root_file = True
-        output_dir = None
+    use_root_file = 'root' in output_formats
+    non_root_formats = [f for f in output_formats if f != 'root']
+
+    # Root output path
+    if use_root_file:
+        root_output_path = output_path if output_path.endswith('.root') else f"{output_path}.root"
     else:
-        # For PDF/PNG formats: use output_path as directory name
-        # Remove .root extension if accidentally provided
-        if output_path.endswith('.root'):
-            output_dir = output_path[:-5]  # Remove the last 5 characters (.root)
-        else:
-            output_dir = output_path
-        use_root_file = False
-        # Create output directory if it doesn't exist
+        root_output_path = None
+
+    # Directory for non-root formats (pdf, png, eps)
+    if non_root_formats:
+        output_dir = output_path[:-5] if output_path.endswith('.root') else output_path
         Path(output_dir).mkdir(parents=True, exist_ok=True)
+    else:
+        output_dir = None
+
+    # Keep a single string alias used in a few legacy print statements
+    output_format = output_formats[0]
 
     # Setup
     style = StyleManager(luminosity=args.lumi, energy=args.energy)
     style.set_style()
 
     loader = DataLoader(args.tree, luminosity=args.lumi,
-                       analysis_mode=analysis_mode, isr_pt_cut=isr_pt_cut)
+                       analysis_mode=analysis_mode, isr_pt_cut=isr_pt_cut,
+                       n_workers=args.workers, verbose=args.verbose)
     plotter1d = Plotter1D(style)
     plotter2d = Plotter2D(style)
     plotter_datamc = PlotterDataMC(style)
@@ -361,11 +421,30 @@ def main():
     # Separate event flags from custom cut strings
     event_flags = [flag for flag in args.flags if is_event_flag(flag)]
     custom_cuts = [flag for flag in args.flags if not is_event_flag(flag)]
+
+    # Build per-custom-cut blind list from YAML (default all False)
+    blind_cuts_all = getattr(args, 'blind_cuts', None) or [False] * len(args.flags)
+    if len(blind_cuts_all) < len(args.flags):
+        blind_cuts_all += [False] * (len(args.flags) - len(blind_cuts_all))
+    custom_blind_cuts = [blind_cuts_all[i] for i, f in enumerate(args.flags)
+                         if not is_event_flag(f)]
+
+    # Map original custom-cut index → data CustomRegion name; None = blinded (never loaded)
+    _di = 0
+    custom_cut_data_region_map = {}
+    for _i, _blind in enumerate(custom_blind_cuts):
+        if _blind:
+            custom_cut_data_region_map[_i] = None
+        else:
+            custom_cut_data_region_map[_i] = f"CustomRegion{_di + 1}"
+            _di += 1
     
     print(f"Loading data for {len(event_flags)} event flags and {len(custom_cuts)} custom cuts...")
     
     # Load each category once (background files deduplicated across groups)
-    sig_data_map, custom_sig_data_map = loader.load_data_unified(signal_files, event_flags, custom_cuts)
+    sig_flat_map, custom_sig_flat_map = loader.load_data_unified(signal_files, event_flags, custom_cuts)
+    sig_data_map = assemble_grouped_map(sig_flat_map, signal_groups, loader.combine_data)
+    custom_sig_data_map = assemble_grouped_map(custom_sig_flat_map, signal_groups, loader.combine_data)
     bg_flat_map, custom_bg_flat_map = loader.load_data_unified(all_bg_files, event_flags, custom_cuts)
 
     # Load data files if provided.
@@ -376,7 +455,7 @@ def main():
     data_flag_key = None   # key used to retrieve cr_data_collection later
     if all_data_files:
         data_event_flags = event_flags.copy()
-        data_custom_cuts = custom_cuts.copy()
+        data_custom_cuts = [c for c, b in zip(custom_cuts, custom_blind_cuts) if not b]
         if args.data_flag:
             if data_flag_is_event:
                 if args.data_flag not in data_event_flags:
@@ -398,41 +477,65 @@ def main():
     # Print comprehensive data loading summary
     loader.print_comprehensive_summary()
     
-    # Output File (only for ROOT format)
+    # Output File (only when root format requested)
     if use_root_file:
-        f_out = ROOT.TFile(output_path, "RECREATE")
+        f_out = ROOT.TFile(root_output_path, "RECREATE")
+        _write_palette_setup(f_out)
     else:
         f_out = None
-    
-    # Shadow the module-level save_canvas to bake in save_hists, keeping all call sites unchanged
-    def save_canvas(canvas, fmt, fout, outdir, subdir="", cname=None):  # noqa: F811
-        _save_canvas_impl(canvas, fmt, fout, outdir, subdir, cname, save_hists=args.save_hists)
+
+    # Shadow the module-level save_canvas to fan out across all requested formats.
+    # Call sites are unchanged — they still pass (canvas, fmt, fout, outdir, ...) but
+    # this wrapper ignores those args and uses the closure-captured format list instead.
+    def save_canvas(canvas, _fmt, _fout, _outdir, subdir="", cname=None):  # noqa: F811
+        for fmt in output_formats:
+            _save_canvas_impl(canvas, fmt,
+                              f_out if fmt == 'root' else None,
+                              output_dir,
+                              subdir, cname, save_hists=args.save_hists)
 
     # Combine both event flags and custom cuts into one processing loop
     all_flags_and_cuts = []
     
-    # Add event flags
+    # region_types is parallel to args.flags; default to None for each flag
+    all_region_types = getattr(args, 'region_types', None) or [None] * len(args.flags)
+    if len(all_region_types) < len(args.flags):
+        all_region_types += [None] * (len(args.flags) - len(all_region_types))
+
+    # Add event flags — auto-derive region_type when not explicitly set
     for flag in event_flags:
+        flag_idx = args.flags.index(flag) if flag in args.flags else -1
+        region_type = all_region_types[flag_idx] if flag_idx >= 0 else None
+        if region_type is None:
+            if _is_sv_region(flag):
+                region_type = 'sv'
+            elif 'NPho' in flag:
+                region_type = 'pho'
         all_flags_and_cuts.append({
             'name': flag,
             'data_source': 'event_flag',
+            'region_type': region_type,
             'sig_data': sig_data_map.get(flag, {}),
             'bg_data': bg_data_map.get(flag, {}),
             'show_region_label': True
         })
-    
+
     # Add custom cuts
+    custom_region_types = [all_region_types[i] for i, f in enumerate(args.flags)
+                           if not is_event_flag(f)]
     for i, custom_region in enumerate(custom_sig_data_map.keys()):
         original_cut = custom_cuts[i] if i < len(custom_cuts) else "Unknown"
         custom_label = args.labels[i] if args.labels and i < len(args.labels) else None
         all_flags_and_cuts.append({
             'name': custom_region,
             'data_source': 'custom_cut',
+            'region_type': custom_region_types[i] if i < len(custom_region_types) else None,
             'sig_data': custom_sig_data_map.get(custom_region, {}),
             'bg_data': custom_bg_data_map.get(custom_region, {}),
             'show_region_label': False,
             'original_cut': original_cut,
-            'custom_label': custom_label
+            'custom_label': custom_label,
+            'blind_data': custom_blind_cuts[i] if i < len(custom_blind_cuts) else False,
         })
     
     # Process all flags and cuts uniformly
@@ -440,6 +543,13 @@ def main():
         flag = item['name']
         current_sig_data = item['sig_data'] 
         current_bg_data = item['bg_data']
+
+        region_type = item.get('region_type')
+
+        # Merge QCD and GJets into a single QCD entry for SV regions by default
+        if region_type == 'sv' and not args.no_merge_qcd_gjets:
+            current_bg_data = _merge_qcd_gjets(current_bg_data, loader.combine_data)
+
         show_region_label = item['show_region_label']
         if item['data_source'] == 'custom_cut':
             print(f"\nProcessing {item['data_source']}: {flag} ('{item['original_cut']}')")
@@ -476,16 +586,12 @@ def main():
         if item['data_source'] == 'event_flag':
             current_data_data = data_data_map.get(flag, {})
         else:
-            # For custom cuts, find the matching region (only if data files were provided)
-            if custom_data_data_map:
-                custom_region_idx = list(custom_sig_data_map.keys()).index(flag) if flag in custom_sig_data_map else -1
-                if custom_region_idx >= 0 and custom_region_idx < len(custom_data_data_map):
-                    custom_region_name = list(custom_data_data_map.keys())[custom_region_idx]
-                    current_data_data = custom_data_data_map.get(custom_region_name, {})
-                else:
-                    current_data_data = {}
+            # For custom cuts, use the blind-aware region map to look up data
+            custom_region_idx = list(custom_sig_data_map.keys()).index(flag) if flag in custom_sig_data_map else -1
+            data_region_name = custom_cut_data_region_map.get(custom_region_idx)  # None = blinded
+            if data_region_name and custom_data_data_map:
+                current_data_data = custom_data_data_map.get(data_region_name, {})
             else:
-                # No data files provided
                 current_data_data = {}
         
         # Retrieve CR data collection for --data-flag (shared by 2D and cr_sig blocks)
@@ -509,41 +615,36 @@ def main():
             if args.unblind:
                 blind_data = False  # Override blinding if --unblind flag is set
             else:
-                blind_data = is_signal_region(flag) or item['data_source'] == 'custom_cut'
+                blind_data = is_signal_region(flag) or item.get('blind_data', False)
             
             # Determine variable set based on final state (like datamc_batch_process.py)
             datamc_vars = []
             
-            # Always include event-level variables
-            event_level_vars = ['rjr_Ms', 'rjr_Rs', 'selCMet']
+            # Event-level variables differ by analysis mode
+            if analysis_mode == AnalysisMode.COMPRESSED:
+                event_level_vars = ['rjrIsr_RIsr', 'rjrIsr_PtIsr']
+            else:
+                event_level_vars = ['rjr_Ms', 'rjr_Rs', 'selCMet']
             datamc_vars.extend(event_level_vars)
             
-            if "NHad" in flag and "NLep" not in flag:
-                # Pure hadronic final state - use HadronicSV variables
-                hadSV_vars = ['HadronicSV_mass', 'HadronicSV_dxy', 'HadronicSV_dxySig',
-                              'HadronicSV_pOverE', 'HadronicSV_decayAngle', 'HadronicSV_cosTheta',
-                              'HadronicSV_nTracks']
-                datamc_vars.extend(hadSV_vars)
-            elif "NLep" in flag and "NHad" not in flag:
-                # Pure leptonic final state - use LeptonicSV variables
-                lepSV_vars = ['LeptonicSV_mass', 'LeptonicSV_dxy', 'LeptonicSV_dxySig',
-                              'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta']
-                datamc_vars.extend(lepSV_vars)
-            elif "NHad" in flag and "NLep" in flag:
-                # Combined final state - use BOTH HadronicSV and LeptonicSV variables
+            if region_type == 'sv':
                 hadSV_vars = ['HadronicSV_mass', 'HadronicSV_dxy', 'HadronicSV_dxySig',
                               'HadronicSV_pOverE', 'HadronicSV_decayAngle', 'HadronicSV_cosTheta',
                               'HadronicSV_nTracks']
                 lepSV_vars = ['LeptonicSV_mass', 'LeptonicSV_dxy', 'LeptonicSV_dxySig',
                               'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta']
-                datamc_vars.extend(hadSV_vars)
-                datamc_vars.extend(lepSV_vars)
-            # else: for other flags (custom cuts, etc.) use only event-level variables
-
-            # Photon variables: added whenever NPho appears in the flag.
-            # mc_only variables (Gen-level) are excluded here since data/MC
-            # comparison requires the variable to exist in data files too.
-            if "NPho" in flag:
+                # For event flags, only include the relevant SV flavor(s)
+                if item['data_source'] == 'event_flag':
+                    if "NHad" in flag and "NLep" not in flag:
+                        datamc_vars.extend(hadSV_vars)
+                    elif "NLep" in flag and "NHad" not in flag:
+                        datamc_vars.extend(lepSV_vars)
+                    else:
+                        datamc_vars.extend(hadSV_vars + lepSV_vars)
+                else:
+                    datamc_vars.extend(hadSV_vars + lepSV_vars)
+            elif region_type == 'pho':
+                # mc_only variables (Gen-level) excluded — not present in data files
                 photon_vars = [
                     v for v, c in AnalysisConfig.VARIABLES.items()
                     if v.startswith('baseLinePhoton_') and not c.get('mc_only', False)
@@ -615,7 +716,7 @@ def main():
             if args.unblind:
                 blind_data = False
             else:
-                blind_data = is_signal_region(flag) or item['data_source'] == 'custom_cut'
+                blind_data = is_signal_region(flag) or item.get('blind_data', False)
 
             # Create directories once before the loop
             if use_root_file:
@@ -722,7 +823,7 @@ def main():
                 # 1. Current flag (CR only): data loaded under the same flag as signal/bg
                 # 2. --data-flag CR collection (if provided and different from current flag)
                 data_2d_cases = []
-                if current_data_data and not is_signal_region(flag):
+                if current_data_data and not (is_signal_region(flag) or item.get('blind_data', False)):
                     data_2d_cases.append((
                         current_data_data, fs_label_latex,
                         f"data_2d_{flag}_{suffix}"
@@ -831,9 +932,10 @@ def main():
 
     if use_root_file:
         f_out.Close()
-        print(f"\nDone! Plots saved to {output_path}")
-    else:
-        print(f"\nDone! Plots saved to {output_dir}/ directory in {output_format} format")
+        print(f"\nDone! Plots saved to {root_output_path}")
+    if output_dir:
+        fmts = ", ".join(non_root_formats)
+        print(f"Done! Plots saved to {output_dir}/ ({fmts})")
 
 if __name__ == "__main__":
     main()

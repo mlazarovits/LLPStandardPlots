@@ -71,11 +71,109 @@ class StyleManager:
             CMS.SetExtraText("Preliminary")
             CMS.SetLumi(self.luminosity)
         else:
-            ROOT.gStyle.SetPadTickX(1)
-            ROOT.gStyle.SetPadTickY(1)
-            ROOT.gStyle.SetHatchesLineWidth(2)
-            ROOT.gStyle.SetHatchesSpacing(1.3)
+            self._apply_fallback_cms_style()
+        # ForceStyle bakes style into object attributes at draw time so saved
+        # ROOT files don't embed a live style pointer that causes crashes on open.
+        ROOT.gROOT.ForceStyle()
         ROOT.gROOT.SetBatch(True)
+
+    def _apply_fallback_cms_style(self):
+        """Replicate setCMSStyle() from the cmsstyle package when it is not installed."""
+        s = ROOT.TStyle("cmsStyle", "Style for P-CMS")
+        ROOT.gROOT.SetStyle(s.GetName())
+        # Canvas
+        s.SetCanvasBorderMode(0)
+        s.SetCanvasColor(ROOT.kWhite)
+        s.SetCanvasDefH(600)
+        s.SetCanvasDefW(600)
+        s.SetCanvasDefX(0)
+        s.SetCanvasDefY(0)
+        # Pad
+        s.SetPadBorderMode(0)
+        s.SetPadColor(ROOT.kWhite)
+        s.SetPadGridX(False)
+        s.SetPadGridY(False)
+        s.SetGridColor(0)
+        s.SetGridStyle(3)
+        s.SetGridWidth(1)
+        # Frame
+        s.SetFrameBorderMode(0)
+        s.SetFrameBorderSize(1)
+        s.SetFrameFillColor(0)
+        s.SetFrameFillStyle(0)
+        s.SetFrameLineColor(1)
+        s.SetFrameLineStyle(1)
+        s.SetFrameLineWidth(1)
+        # Histogram
+        s.SetHistLineColor(1)
+        s.SetHistLineStyle(0)
+        s.SetHistLineWidth(1)
+        s.SetEndErrorSize(2)
+        s.SetMarkerStyle(20)
+        s.SetMarkerSize(1)
+        # Fit/function
+        s.SetOptFit(1)
+        s.SetFitFormat("5.4g")
+        s.SetFuncColor(2)
+        s.SetFuncStyle(1)
+        s.SetFuncWidth(1)
+        # Date
+        s.SetOptDate(0)
+        # Legend
+        s.SetLegendTextSize(0.04)
+        s.SetLegendFont(42)
+        s.SetLegendBorderSize(0)
+        s.SetLegendFillColor(0)
+        # Stats box
+        s.SetOptFile(0)
+        s.SetOptStat(0)
+        s.SetStatColor(ROOT.kWhite)
+        s.SetStatFont(42)
+        s.SetStatFontSize(0.025)
+        s.SetStatTextColor(1)
+        s.SetStatFormat("6.4g")
+        s.SetStatBorderSize(1)
+        s.SetStatH(0.1)
+        s.SetStatW(0.15)
+        # Margins
+        s.SetPadTopMargin(0.05)
+        s.SetPadBottomMargin(0.13)
+        s.SetPadLeftMargin(0.16)
+        s.SetPadRightMargin(0.02)
+        # Global title
+        s.SetOptTitle(0)
+        s.SetTitleFont(42)
+        s.SetTitleColor(1)
+        s.SetTitleTextColor(1)
+        s.SetTitleFillColor(10)
+        s.SetTitleFontSize(0.05)
+        # Axis titles
+        s.SetTitleColor(1, "XYZ")
+        s.SetTitleFont(42, "XYZ")
+        s.SetTitleSize(0.06, "XYZ")
+        s.SetTitleXOffset(1.1)
+        s.SetTitleYOffset(1.35)
+        # Axis labels
+        s.SetLabelColor(1, "XYZ")
+        s.SetLabelFont(42, "XYZ")
+        s.SetLabelOffset(0.012, "XYZ")
+        s.SetLabelSize(0.05, "XYZ")
+        # Axis
+        s.SetAxisColor(1, "XYZ")
+        s.SetStripDecimals(True)
+        s.SetTickLength(0.03, "XYZ")
+        s.SetNdivisions(510, "XYZ")
+        s.SetPadTickX(1)
+        s.SetPadTickY(1)
+        # Log plots
+        s.SetOptLogx(0)
+        s.SetOptLogy(0)
+        s.SetOptLogz(0)
+        # Postscript
+        s.SetPaperSize(20.0, 20.0)
+        s.SetHatchesLineWidth(2)
+        s.SetHatchesSpacing(1.3)
+        s.cd()
     
     def reset_palette_for_1d(self):
         """Reset palette to standard colors for 1D/data-MC plots."""
