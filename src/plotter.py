@@ -340,7 +340,7 @@ class Plotter2D(PlotterBase):
             
         return hist
 
-    def plot_2d_baseFormat(self, hist, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65, prelim_str = "Preliminary",normalize=False):
+    def plot_2d_baseFormat(self, hist, x_var, y_var, canvas, axis_labels, sample_label, final_state_label, sample_label_x_pos=0.65, prelim_str = "Preliminary",normalize=False):
         """Creates a CMS styled 2D plot with configurable x and y variables."""
         # Load ranges from config
         x_conf = AnalysisConfig.VARIABLES.get(x_var)
@@ -355,28 +355,29 @@ class Plotter2D(PlotterBase):
         y_label = y_conf['label']
 
         # Get data arrays - use the mapped variable name or branch name directly
-        x_data_key = self._map_var_name(x_conf['name'])
-        y_data_key = self._map_var_name(y_conf['name'])
+        #x_data_key = self._map_var_name(x_conf['name'])
+        #y_data_key = self._map_var_name(y_conf['name'])
 
         # Try branch name first, then mapped name
-        x_data = data.get(x_var, data.get(x_data_key, []))
-        y_data = data.get(y_var, data.get(y_data_key, []))
+        #x_data = data.get(x_var, data.get(x_data_key, []))
+        #y_data = data.get(y_var, data.get(y_data_key, []))
 
-        if len(x_data) == 0 or len(y_data) == 0:
-            print(f"  Warning: No data for 2D plot {name} (x_var={x_var}, y_var={y_var})")
-            return None, None
+        #if len(x_data) == 0 or len(y_data) == 0:
+        #    print(f"  Warning: No data for 2D plot {name} (x_var={x_var}, y_var={y_var})")
+        #    return None, None
 
-        hist = self.create_2d_histogram(x_data, y_data, data['weights'],
-                                      x_conf['bins'], x_min, x_max,
-                                      y_conf['bins'], y_min, y_max, name)
-
-        canvas = CMS.cmsCanvas(name, x_min, x_max, y_min, y_max, x_label, y_label,
-                              square=False, extraSpace=0.01, iPos=0, with_z_axis=True)
+        #hist = self.create_2d_histogram(x_data, y_data, data['weights'],
+        #                              x_conf['bins'], x_min, x_max,
+        #                              y_conf['bins'], y_min, y_max, name)
+        name = hist.GetName()
+        #canvas = CMS.cmsCanvas("cv_"+name, x_min, x_max, y_min, y_max, x_label, y_label,
+        #                      square=False, extraSpace=0.01, iPos=0, with_z_axis=True)
         canvas.SetLogz(True)
-        canvas.SetGridx(True)
-        canvas.SetGridy(True)
+        canvas.SetGridx(False)
+        canvas.SetGridy(False)
         canvas.SetLeftMargin(self.style.margin_left)
         canvas.SetRightMargin(self.style.margin_right+0.06)
+        #canvas.Draw()
         canvas.cd() # Explicitly change to this canvas
 
         # Re-apply palette (CMS style might reset it)
@@ -406,12 +407,10 @@ class Plotter2D(PlotterBase):
         
         # Re-apply palette immediately before drawing
         ROOT.gStyle.SetPalette(self.style.color_palette)
-        
-        hist.Draw("COLZ")
+      
+        hist.Draw("samecolz")
         canvas.Update() # Update after drawing histogram
-        
-        # Use common CMS label drawing, using default positions
-        self.style.draw_cms_labels(prelim_str = prelim_str)
+        #
         self.style.draw_process_label(sample_label, x_pos=sample_label_x_pos, y_pos=0.87)
         print("prelim_str",prelim_str)
         if prelim_str == "Preliminary Simulation":

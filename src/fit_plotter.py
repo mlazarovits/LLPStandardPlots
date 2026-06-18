@@ -21,9 +21,9 @@ RISR_LABELS = {
 }
 
 MSRS_MS_LABELS = {
-    "0": "M_{S}^{SR,-}",
-    "1": "M_{S}^{SR,+}",
-    "2": "M_{S}^{SR,++}",
+    "0": "M_{S}^{-}",
+    "1": "M_{S}^{+}",
+    "2": "M_{S}^{++}",
 }
 MSRS_RS_LABELS = {
     "0": "R_{S}^{-}",
@@ -32,29 +32,51 @@ MSRS_RS_LABELS = {
 }
 
 MS_DELAYED_LABELS = {
-    "00": "#geq 2000",
+    "00": "M_{S} #in [2000, 2600)",
+    "01": "R_{S} #in < 0.35",
+    "10": "M_{S} #in #geq 2600",
+    "11": "R_{S} #in #geq 0.35",
 }
 
 COMBINED_MS_DELAYED_LABELS = {
-    "00": "#geq 2000",
+    "00": "",
+    "00": "M_{S}^{-}",
+    "01": "R_{S}^{-}",
+    "10": "M_{S}^{+}",
+    "11": "R_{S}^{+}",
     #"10": "M_{S}^{SR}",
 }
 
 CHANNEL_LABELS = {
     #Full NonCompressed Regions
-    "Ch1CRGeLep1": "#geq 1 Lep. SV, S^{-}_{xy}",
-    "Ch2SRGeLep1": "#geq 1 Lep. SV, S^{+}_{xy}",
-    "Ch3CRGeHad1": "#geq 1 Had. SV, S^{-}_{xy}",
-    "Ch4SRGeHad1": "#geq 1 Had. SV, S^{+}_{xy}",
-    "Ch5CRgeq1PhoBHEarlyBin":"BH #gamma, early timing",
-    "Ch6CRgeq1PhoBHLateBin": "BH #gamma, late timing",
-    "Ch7CRgeq1PhoNotBHEarlyBin": "Non-BH #gamma, early timing",
-    "Ch8SRgeq1PhoNotBHLateBin":"Non-BH #gamma, late timing",
-    "Ch8CRgeq1PhoNotBHLateBin":"Non-BH #gamma, late timing (VR)",
-    "Ch9CReq1PhoMedIsoPromptBin":"Med Iso 1 #gamma",
-    "Ch10SReq1PhoTightIsoPromptBin":"Tight Iso 1 #gamma",
-    "Ch11CReq2PhoMedIsoPromptBin":"Med Iso 2 #gamma",
-    "Ch12SReq2PhoTightIsoPromptBin":"Tight Iso 2 #gamma",
+    "Ch1CRGeLep1": "#geq 1 Lep. SV, CR: S^{-}_{xy}",
+    "Ch2SRGeLep1": "#geq 1 Lep. SV, SR: S^{+}_{xy}",
+    "Ch3CRGeHad1": "#geq 1 Had. SV, CR: S^{-}_{xy}",
+    "Ch4SRGeHad1": "#geq 1 Had. SV, SR: S^{+}_{xy}",
+    "Ch5CRgeq1PhoBHEarlyBin":"#gamma^{BH}_{t-}",
+    "Ch5CRgeq1PhoBHEarly":"#gamma^{BH}_{t-}",
+    "Ch6CRgeq1PhoBHLateBin": "#gamma^{BH}_{t+}",
+    "Ch6CRgeq1PhoBHLate": "#gamma^{BH}_{t+}",
+    "Ch7CRgeq1PhoNotBHEarlyBin": "#gamma^{!BH}_{t-}",
+    "Ch7CRgeq1PhoNotBHEarly": "#gamma^{!BH}_{t-}",
+    "Ch8SRgeq1PhoNotBHLateBin":"#gamma^{!BH}_{t+}",
+    "Ch8SRgeq1PhoNotBHLate":"#gamma^{!BH}_{t+}",
+    "Ch8SRgeq1PhoNotBHLateTightIso":"#gamma^{!BH}_{t+}",
+    "Ch8CRgeq1PhoNotBHLateBin":"#gamma^{!BH}_{t+}",
+    "Ch8CRgeq1PhoNotBHLate":"#gamma^{!BH}_{t+}",
+    "Ch8CRgeq1PhoNotBHLateTightIso":"#gamma^{!BH}_{t+}",
+    "Ch9CReq1PhoMedIsoPromptBin":"1 #gamma, CR: Med Iso",
+    "Ch9CReq1PhoMedIsoPrompt":"1 #gamma, CR: Med Iso",
+    "Ch10SReq1PhoTightIsoPromptBin":"1 #gamma, SR: Tight Iso",
+    "Ch10SReq1PhoTightIsoPrompt":"1 #gamma, SR: Tight Iso",
+    "Ch11CReq2PhoMedIsoPromptBin":"2 #gamma, CR: Med Iso",
+    "Ch11CReq2PhoMedIsoPrompt":"2 #gamma, CR: Med Iso",
+    "Ch12SReq2PhoTightIsoPromptBin":"2 #gamma, SR: Tight Iso",
+    "Ch12SReq2PhoTightIsoPrompt":"2 #gamma, SR: Tight Iso",
+    "Ch8CRgeq1PhoNotBHLate":"#gamma^{!BH}_{t+}",
+    "Ch15CRgeq1PhoMedIsoEarly":"#gamma^{MedIso}_{t-}",
+    "Ch16CRgeq1PhoMedIsoLate":"#gamma^{MedIso}_{t+}",
+    "Ch17CRgeq1PhoTightIsoEarly":"#gamma^{TightIso}_{t-}",
     # Compressed shape_transfer
     "Ch1CRHadLow":        "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [100, 600)",
     "Ch2CRHadHigh":       "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [600, 1000)",
@@ -65,6 +87,9 @@ CHANNEL_LABELS = {
     "Ch6CRPho2Iso":       "Prompt #gamma, ISO #in [0.5, 0.52)",
     "Ch7CRHadLow":        "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [100, 600)",
     "Ch8CRHadHigh":       "1 Had. SV, d_{xy}/#sigma_{d_{xy}} #in [600, 1000)",
+    "Ch13CRgeq1SVLowDxygeq1PhoNotBHLate" : "#geq 1 SV_{had} #geq 1 #gamma^{!BH}_{t+}, CR: S^{-}_{xy}", 
+    "Ch14CRgeq1SVHighDxygeq1PhoNotBHLate" : "#geq 1 SV_{had} #geq 1 #gamma^{!BH}_{t+}, SR: S^{+}_{xy}", 
+    "Ch14SRgeq1SVHighDxygeq1PhoNotBHLate" : "#geq 1 SV_{had} #geq 1 #gamma^{!BH}_{t+}, SR: S^{+}_{xy}", 
     # Uncompressed ABCD
     "Ch1CRgeq1PhoBHEarly":    "BH #gamma, early timing",
     "Ch2CRgeq1PhoBHLate":     "BH #gamma, late timing",
@@ -468,7 +493,7 @@ class FitPlotter:
             for gl, (ch, _) in zip(abcd_deco["group_labels"], abcd_bin_order):
                 if ch == sr_ch:
                     sr_bins.extend(range(gl["start"], gl["end"]))
-
+        #print("group_labels",(abcd_deco["group_labels"]+ _offset(shape_deco["group_labels"], n_abcd)))
         return {
             "n_bins":      n_total,
             "bin_labels":  abcd_deco["bin_labels"] + shape_deco["bin_labels"],
@@ -614,8 +639,8 @@ class FitPlotter:
             lt_key.SetTextFont(42); lt_key.SetTextSize(0.052); lt_key.SetTextAlign(12)
             y0 = 0.65
             dy = 0.075
-            for i, (sym, rng) in enumerate(defs):
-                lt_key.DrawLatex(rp + 0.01, y0 - i * dy, f"{sym}  :  {rng}")
+            #for i, (sym, rng) in enumerate(defs):
+            #    lt_key.DrawLatex(rp + 0.01, y0 - i * dy, f"{sym}  :  {rng}")
             rp_objs.append(lt_key)
 
         if right_panel:
@@ -846,12 +871,15 @@ class FitPlotter:
         pad.cd()
         n, dw = deco["n_bins"], 1.0 - left_m - right_m
         lt = ROOT.TLatex(); lt.SetNDC(True)
-        lt.SetTextFont(42); lt.SetTextSize(0.062); lt.SetTextAlign(22)
+        textsize = 0.03
+        lt.SetTextFont(42); lt.SetTextSize(0.03); lt.SetTextAlign(22)
         gap = 0.035  # half-gap between two stacked lines
         for g in deco["group_labels"]:
             cx   = (g["start"] + g["end"]) / 2.0
             x    = left_m + (cx / n) * dw
             parts = g["text"].split(", ", 1)
+            if any(["SV" in p and "gamma" in p for p in parts]):
+                lt.SetTextSize(0.02)
             if len(parts) == 2:
                 lt.DrawLatex(x, y_pos + gap, parts[0])
                 lt.DrawLatex(x, y_pos - gap, parts[1])
@@ -867,7 +895,7 @@ class FitPlotter:
         objs  = []
 
         lt = ROOT.TLatex(); lt.SetNDC(True)
-        lt.SetTextFont(42); lt.SetTextSize(0.12); lt.SetTextAlign(22)
+        lt.SetTextFont(42); lt.SetTextSize(0.07); lt.SetTextAlign(22)
         for sg in deco["sub_group_labels"]:
             cx = (sg["start"] + sg["end"]) / 2.0
             lt.DrawLatex(left_m + (cx / n) * dw, y_pos, sg["text"])
@@ -893,7 +921,7 @@ class FitPlotter:
         lt = ROOT.TLatex(); lt.SetNDC(True)
         #lt.SetTextFont(42); lt.SetTextSize(0.13)
 	    #CHANGE BIN LABELS SIZE HERE!!!!
-        lt.SetTextFont(42); lt.SetTextSize(0.1)
+        lt.SetTextFont(42); lt.SetTextSize(0.07)
         if is_risr:
             lt.SetTextAngle(-20)
             lt.SetTextAlign(12)  # left end at bin left-edge, text slopes down-right into margin
