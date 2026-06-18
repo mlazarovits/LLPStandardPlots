@@ -55,10 +55,10 @@ except ImportError:
             leg.SetFillColor(0)
             leg.Draw()
             return leg
-from LLPStandardPlots.src.style import StyleManager
-from LLPStandardPlots.src.utils import parse_signal_name, parse_background_name
-from LLPStandardPlots.src.config import AnalysisConfig
-from LLPStandardPlots.src.unrolled import UnrolledBinning
+from src.style import StyleManager
+from src.utils import parse_signal_name, parse_background_name
+from src.config import AnalysisConfig
+from src.unrolled import UnrolledBinning
 
 ROOT.gROOT.ForceStyle(False)
 
