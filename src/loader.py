@@ -1,5 +1,15 @@
 import uproot
 import numpy as np
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable=None, **kwargs):
+        return iterable if iterable is not None else _TqdmDummy()
+
+    class _TqdmDummy:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def update(self, n=1): pass
 from src.selections import SelectionManager
 from src.config import AnalysisConfig, AnalysisMode, ModeConfig
 
@@ -17,11 +27,13 @@ def _merge_chunks(chunks):
 
 class DataLoader:
     def __init__(self, tree_name='kuSkimTree', luminosity=400,
-                 analysis_mode='uncompressed', isr_pt_cut=None):
+                 analysis_mode='uncompressed', isr_pt_cut=None, n_workers=1, verbose=False):
         self.tree_name = tree_name
         self.luminosity = luminosity
         self.analysis_mode = analysis_mode
         self.isr_pt_cut = isr_pt_cut
+        self.n_workers = max(1, int(n_workers))
+        self.verbose = verbose
         self.selection_manager = SelectionManager()
         self.loading_summary = {
             'data_types_loaded': set(),
@@ -54,8 +66,11 @@ class DataLoader:
             'HadronicSV_nTracks',
             'LeptonicSV_mass', 'LeptonicSV_dxy', 'LeptonicSV_dxySig',
             'LeptonicSV_pOverE', 'LeptonicSV_decayAngle', 'LeptonicSV_cosTheta',
-            # Photon timing variables (Gen branches absent in data files; handled gracefully)
+            # Photon variables (Gen branches absent in data files; handled gracefully)
+            'nBaseLinePhotons',
             'baseLinePhoton_WTimeSig',
+            'baseLinePhoton_beamHaloCNNScore',
+            'baseLinePhoton_isoANNScore',
             'baseLinePhoton_GenTimeSig',
             'baseLinePhoton_GenLabTimeSig'
         ]
@@ -84,8 +99,10 @@ class DataLoader:
         # Add mode-specific cuts
         if self.analysis_mode == AnalysisMode.UNCOMPRESSED:
             baseline_cuts.append("rjrPTS < 150")
-        elif self.analysis_mode == AnalysisMode.COMPRESSED and self.isr_pt_cut is not None:
-            baseline_cuts.append(f"rjrIsr_PtIsr >= {self.isr_pt_cut:.0f}")
+        elif self.analysis_mode == AnalysisMode.COMPRESSED:
+            baseline_cuts.append("rjrIsr_nSVisObjects > 0")
+            if self.isr_pt_cut is not None:
+                baseline_cuts.append(f"rjrIsr_PtIsr >= {self.isr_pt_cut:.0f}")
 
         print(f"    • Baseline cuts: {', '.join(baseline_cuts)}")
 
@@ -120,7 +137,8 @@ class DataLoader:
         all_data = {flag: {} for flag in final_state_flags}
         
         for file_path in file_paths:
-            print(f"Loading {file_path}...")
+            if self.verbose:
+                print(f"Loading {file_path}...")
             try:
                 with uproot.open(file_path) as f:
                     if self.tree_name not in f:
@@ -225,30 +243,115 @@ class DataLoader:
         Args:
             is_data: If True, treat as data files (no MC scaling)
         Returns: (event_flag_data, custom_cut_data)
+        Uses self.n_workers > 1 for file-level parallelism via ProcessPoolExecutor.
         """
         self._track_loading(event_flags=event_flags, custom_cuts=custom_cuts, is_data=is_data, file_count=len(file_paths))
-        # branches to load - use mode-aware branch selection
         branches = self._get_branches_for_mode()
-        # Add flag branches, expanding '+'(AND) and '|'(OR) operators into components
         for flag in event_flags:
             for or_part in flag.split('|'):
                 branches.extend(f.strip() for f in or_part.split('+'))
         branches.extend(self.selection_manager.flags)
-        
-        # Initialize data structures
+
         event_data = {flag: {} for flag in event_flags}
         custom_data = {f"CustomRegion{i+1}": {} for i in range(len(custom_cuts))}
-        
-        results = [self._load_one_file(fp, branches, event_flags, custom_cuts, is_data)
-                   for fp in file_paths]
 
-        for file_path, file_event, file_custom in results:
+        def _merge_result(file_path, file_event, file_custom):
             for flag, fdata in file_event.items():
                 event_data[flag][file_path] = fdata
             for region, fdata in file_custom.items():
                 custom_data[region][file_path] = fdata
 
+        if self.n_workers > 1 and len(file_paths) > 1:
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+            if self.verbose:
+                print(f"  Parallel loading: {len(file_paths)} files across {self.n_workers} workers")
+            with ProcessPoolExecutor(max_workers=self.n_workers) as pool:
+                futures = {
+                    pool.submit(self._load_one_file, fp, branches, event_flags, custom_cuts, is_data): fp
+                    for fp in file_paths
+                }
+                with tqdm(total=len(file_paths), unit="file", desc="Loading") as pbar:
+                    for fut in as_completed(futures):
+                        fp_done, file_event, file_custom = fut.result()
+                        _merge_result(fp_done, file_event, file_custom)
+                        pbar.update(1)
+        else:
+            import gc, ctypes
+
+            def _trim_heap():
+                gc.collect()
+                try:
+                    ctypes.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+                except Exception:
+                    pass
+
+            for fp in tqdm(file_paths, unit="file", desc="Loading"):
+                file_path, file_event, file_custom = self._load_one_file(
+                    fp, branches, event_flags, custom_cuts, is_data)
+                _merge_result(file_path, file_event, file_custom)
+                _trim_heap()
+
         return event_data, custom_data
+
+    # Branches we know are scalar (one value per event) and safe to push into
+    # uproot's C-level cut expression.  Jagged branches cannot be used there.
+    _KNOWN_SCALAR_BRANCHES = {
+        'SV_nHadronic', 'SV_nLeptonic', 'nSelPhotons', 'selCMet', 'evtFillWgt',
+        'rjrIsr_Ms', 'rjrIsr_MsPerp', 'rjrIsr_PtIsr', 'rjrIsr_RIsr', 'rjrIsr_Rs',
+        'rjrIsrPTS', 'rjrIsrSdphiBV', 'rjrIsr_nSVisObjects', 'rjrIsr_nIsrVisObjects',
+        'rjr_Ms', 'rjr_Rs', 'rjrPTS',
+    }
+
+    def _build_scalar_prefilter(self, custom_cuts, available_branches, tree):
+        """
+        Extract scalar necessary-conditions from custom cuts and return a combined
+        uproot-compatible filter string.
+
+        For each custom cut, split on top-level OR, extract scalar sub-conditions
+        from each AND-clause, then reassemble as OR of AND-clauses.  The result is
+        a necessary (but not sufficient) condition: any event failing it is
+        guaranteed to fail all custom cuts, so it can be dropped before entering
+        Python.
+        """
+        import re
+
+        # Only use scalar branches that are actually present in this tree.
+        scalar_branches = self._KNOWN_SCALAR_BRANCHES & set(available_branches)
+        if not scalar_branches:
+            return None
+
+        cond_re = re.compile(
+            r'\b(' + '|'.join(re.escape(b) for b in sorted(scalar_branches, key=len, reverse=True)) +
+            r')\s*(>=|<=|==|!=|>|<)\s*(-?\d+(?:\.\d+)?)')
+
+        per_cut_filters = []
+        for cut in custom_cuts:
+            normalized = cut.replace('&&', ' & ').replace('||', ' | ')
+            or_clauses = self._split_respecting_parens(normalized, ' | ')
+
+            clause_filters = []
+            for clause in or_clauses:
+                scalar_conds = cond_re.findall(clause)
+                if scalar_conds:
+                    clause_filters.append(
+                        ' & '.join(f'({v} {op} {val})' for v, op, val in scalar_conds))
+
+            if clause_filters:
+                per_cut_filters.append('(' + ' | '.join(f'({c})' for c in clause_filters) + ')')
+
+        return ' | '.join(per_cut_filters) if per_cut_filters else None
+
+    @staticmethod
+    def _rss_mb():
+        """Return current process RSS in MB (Linux /proc; falls back to 0)."""
+        try:
+            with open('/proc/self/status') as fh:
+                for line in fh:
+                    if line.startswith('VmRSS:'):
+                        return int(line.split()[1]) / 1024
+        except Exception:
+            pass
+        return 0
 
     def _load_one_file(self, file_path, branches, event_flags, custom_cuts, is_data):
         """Load and process a single file in chunks to bound memory usage."""
@@ -257,7 +360,8 @@ class DataLoader:
         event_result = {}
         custom_result = {}
 
-        print(f"Loading {file_path}...")
+        if self.verbose:
+            print(f"Loading {file_path}...  [RSS {self._rss_mb():.0f} MB]")
         try:
             with uproot.open(file_path) as f:
                 if self.tree_name not in f:
@@ -265,23 +369,63 @@ class DataLoader:
                     return file_path, event_result, custom_result
 
                 tree = f[self.tree_name]
-                available_branches = [b for b in branches if b in tree]
+                n_entries = tree.num_entries
+                tree_keys = set(tree.keys())
+                available_branches = [b for b in branches if b in tree_keys]
+                # Warn once if requested photon branches are missing from this tree
+                _pho_requested = {'baseLinePhoton_beamHaloCNNScore', 'baseLinePhoton_WTimeSig',
+                                  'baseLinePhoton_isoANNScore', 'nBaseLinePhotons'}
+                _pho_missing = _pho_requested - tree_keys
+                if _pho_missing and custom_cuts and self.verbose:
+                    print(f"  Note: photon branch(es) absent from tree: {sorted(_pho_missing)}")
+                    print(f"  Available photon-like keys: {sorted(k for k in tree_keys if 'oto' in k or 'Pho' in k)[:10]}")
                 cut_expr = (f"(selCMet > {AnalysisConfig.MET_CUT}) &"
                             f" (evtFillWgt < {AnalysisConfig.EVT_WGT_CUT})")
+
+                scalar_prefilter = self._build_scalar_prefilter(
+                    custom_cuts, available_branches, tree)
+                if scalar_prefilter:
+                    cut_expr = f"({cut_expr}) & ({scalar_prefilter})"
+
+                if self.analysis_mode == AnalysisMode.COMPRESSED:
+                    if (self.isr_pt_cut is not None and
+                            'rjrIsr_PtIsr' in available_branches):
+                        cut_expr += f" & (rjrIsr_PtIsr >= {self.isr_pt_cut})"
+                    if 'rjrIsr_nSVisObjects' in available_branches:
+                        cut_expr += " & (rjrIsr_nSVisObjects > 0)"
+
+                if self.verbose:
+                    print(f"  tree entries: {n_entries:,}  |  uproot cut: {cut_expr}")
 
                 event_chunks = {flag: [] for flag in event_flags}
                 custom_chunks = {f"CustomRegion{i+1}": [] for i in range(len(custom_cuts))}
                 flag_counts  = {flag: 0 for flag in event_flags}
                 pass_counts  = {flag: 0 for flag in event_flags}
 
+                import gc, ctypes
+                def _trim():
+                    gc.collect()
+                    try:
+                        ctypes.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+                    except Exception:
+                        pass
+
+                total_loaded = 0
+                total_base   = 0
+                custom_pass  = [0] * len(custom_cuts)
+                custom_stored_events = [0] * len(custom_cuts)
+                chunk_count  = 0
+
                 for chunk in tree.iterate(available_branches, cut=cut_expr,
                                           library='np', step_size=CHUNK_SIZE):
                     n_events = len(chunk['evtFillWgt'])
+                    total_loaded += n_events
                     base_mask = np.ones(n_events, dtype=bool)
 
                     for flag in self.selection_manager.flags:
                         if flag in chunk:
                             base_mask &= (chunk[flag] == 1)
+                    total_base += int(np.sum(base_mask))
 
                     # Process event flags ('|' = OR, '+' = AND)
                     for fs_flag in event_flags:
@@ -323,23 +467,72 @@ class DataLoader:
                                 'SV_nLeptonic': chunk.get("SV_nLeptonic", np.zeros(n_events)),
                                 'selCMet':      chunk.get("selCMet",      np.zeros(n_events)),
                             }
+                            # Add SV object variables (jagged) as first-element scalars per event
+                            for sv_var in ['HadronicSV_dxySig', 'HadronicSV_mass', 'HadronicSV_dxy',
+                                           'HadronicSV_nTracks', 'LeptonicSV_dxySig',
+                                           'LeptonicSV_mass', 'LeptonicSV_dxy']:
+                                if sv_var in chunk:
+                                    cut_variables[sv_var] = np.array(
+                                        [float(a[0]) if len(a) > 0 else np.nan
+                                         for a in chunk[sv_var]], dtype=float)
+                            # Add photon variables (jagged) as first-element scalars per event.
+                            # Default to NaN when a branch is absent so photon cuts fail
+                            # gracefully on files produced without photon reconstruction.
+                            _nan_pho = np.full(n_events, np.nan)
+                            for pho_var in ['baseLinePhoton_beamHaloCNNScore', 'baseLinePhoton_WTimeSig',
+                                            'baseLinePhoton_isoANNScore', 'baseLinePhoton_GenTimeSig']:
+                                if pho_var in chunk:
+                                    cut_variables[pho_var] = np.array(
+                                        [float(a[0]) if len(a) > 0 else np.nan
+                                         for a in chunk[pho_var]], dtype=float)
+                                else:
+                                    cut_variables[pho_var] = _nan_pho
+                            # nBaseLinePhotons: default 0 (no photons) when branch is absent
+                            cut_variables['nBaseLinePhotons'] = chunk.get(
+                                'nBaseLinePhotons', np.zeros(n_events, dtype=np.int32))
                             if self.analysis_mode == AnalysisMode.COMPRESSED:
                                 for isr_var in ['rjrIsr_Ms', 'rjrIsr_MsPerp', 'rjrIsr_PtIsr',
                                                'rjrIsr_RIsr', 'rjrIsr_Rs', 'rjrIsrPTS',
                                                'rjrIsr_nSVisObjects', 'rjrIsr_nIsrVisObjects']:
                                     if isr_var in chunk:
                                         cut_variables[isr_var] = chunk[isr_var]
+                            elif self.analysis_mode == AnalysisMode.UNCOMPRESSED:
+                                for unc_var in ['rjr_Ms', 'rjr_Rs', 'rjrPTS']:
+                                    if unc_var in chunk:
+                                        cut_variables[unc_var] = np.array(
+                                            [float(a[0]) if len(a) > 0 else np.nan
+                                             for a in chunk[unc_var]], dtype=float)
                             custom_mask = self._parse_simple_cut(custom_cut, cut_variables)
                             combined_mask = base_mask & custom_mask
                         except Exception as e:
                             print(f"  Warning: Failed to evaluate custom cut '{custom_cut}': {e}")
                             continue
 
-                        if np.sum(combined_mask) == 0:
+                        n_pass = int(np.sum(combined_mask))
+                        custom_pass[i] += n_pass
+                        if n_pass == 0:
                             continue
                         extracted_vars = self._extract_values(chunk, combined_mask, is_data)
                         if extracted_vars:
+                            n_stored = max((len(v) for v in extracted_vars.values()), default=0)
+                            custom_stored_events[i] += n_stored
                             custom_chunks[custom_region_name].append(extracted_vars)
+
+                    chunk_count += 1
+                    _trim()
+
+                # Per-file summary
+                if self.verbose:
+                    print(f"  loaded {total_loaded:,} evts after uproot cut  |  "
+                          f"{total_base:,} pass base mask  |  RSS {self._rss_mb():.0f} MB")
+                    for i, cut in enumerate(custom_cuts):
+                        acc_mb = 0
+                        region = f"CustomRegion{i+1}"
+                        for chunk_vars in custom_chunks[region]:
+                            acc_mb += sum(a.nbytes for a in chunk_vars.values()) / 1e6
+                        print(f"  custom cut {i+1}: {custom_pass[i]:,} events pass cut  |  "
+                              f"{custom_stored_events[i]:,} stored entries  |  "
+                              f"accumulated {acc_mb:.1f} MB in custom_chunks")
 
                 # Merge chunks
                 for fs_flag in event_flags:
@@ -388,14 +581,12 @@ class DataLoader:
                     data['rjrPTS'][idx][0] < AnalysisConfig.RJR_PTS_CUT):
                     passes_validation = True
             else:
-                # Compressed mode: require ISR variables and optionally apply ISR pT cut
-                if 'rjrIsrPTS' in data:
-                    if self.isr_pt_cut is not None:
-                        # Apply ISR pT cut if specified (skip events below the cut)
-                        if 'rjrIsr_PtIsr' in data and data['rjrIsr_PtIsr'][idx] >= self.isr_pt_cut:
-                            passes_validation = True
-                    else:
-                        passes_validation = True
+                # Compressed mode: require rjrIsr_PtIsr, rjrIsr_nSVisObjects > 0, and ISR pT cut
+                if 'rjrIsr_PtIsr' in data and 'rjrIsr_nSVisObjects' in data:
+                    passes_pt = (self.isr_pt_cut is None or
+                                 data['rjrIsr_PtIsr'][idx] >= self.isr_pt_cut)
+                    passes_nsv = data['rjrIsr_nSVisObjects'][idx] > 0
+                    passes_validation = passes_pt and passes_nsv
 
             if not passes_validation:
                 continue
@@ -437,15 +628,23 @@ class DataLoader:
                         extracted_data[f'{var_key}_weights'].append(base_weight)
 
                 elif var_key.startswith('HadronicSV_') or var_key.startswith('LeptonicSV_'):
-                    # SV variables: flatten jagged arrays - one entry per SV object
                     sv_array = data[var_key][idx]
-                    for sv_val in sv_array:
-                        scaled_val = sv_val * var_config['scale']
-                        extracted_data[var_key].append(scaled_val)
-                        extracted_data[f'{var_key}_weights'].append(base_weight)
+                    if self.analysis_mode == AnalysisMode.COMPRESSED:
+                        # Extract only the leading SV to avoid per-event array flattening
+                        # on large data files; consistent with custom-cut evaluation.
+                        if len(sv_array) > 0:
+                            scaled_val = float(sv_array[0]) * var_config['scale']
+                            extracted_data[var_key].append(scaled_val)
+                            extracted_data[f'{var_key}_weights'].append(base_weight)
+                    else:
+                        for sv_val in sv_array:
+                            scaled_val = sv_val * var_config['scale']
+                            extracted_data[var_key].append(scaled_val)
+                            extracted_data[f'{var_key}_weights'].append(base_weight)
 
                 elif var_key.startswith('baseLinePhoton_'):
-                    # Photon variables: flatten jagged arrays - one entry per photon object
+                    if self.analysis_mode == AnalysisMode.COMPRESSED:
+                        continue
                     photon_array = data[var_key][idx]
                     for ph_val in photon_array:
                         scaled_val = ph_val * var_config['scale']

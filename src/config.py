@@ -49,7 +49,7 @@ class AnalysisConfig:
             'name': 'had_dxysig',
             'label': 'd_{xy}/#sigma_{d_{xy}}',
             'bins': 25,
-            'range': (0, 1000),
+            'range': (0, 800),
             'scale': 1.0,
             'is_vector': True
         },
@@ -105,7 +105,7 @@ class AnalysisConfig:
             'name': 'lep_dxysig',
             'label': 'd_{xy}/#sigma_{d_{xy}}',
             'bins': 25,
-            'range': (0, 1000),
+            'range': (0, 500),
             'scale': 1.0,
             'is_vector': True
         },
@@ -297,19 +297,12 @@ class ModeConfig:
     }
 
     COMPRESSED = {
-        'default_vars': ['rjrIsr_Ms', 'rjrIsr_MsPerp', 'rjrIsr_PtIsr', 'rjrIsr_RIsr', 'rjrIsr_Rs'],
+        'default_vars': ['rjrIsr_PtIsr', 'rjrIsr_RIsr'],
         'plot_2d_configs': [
-            {'x_var': 'rjrIsr_Ms', 'y_var': 'rjrIsr_Rs', 'suffix': 'MsISR_vs_Rs'},
-            {'x_var': 'rjrIsr_MsPerp', 'y_var': 'rjrIsr_RIsr', 'suffix': 'Mperp_vs_RISR'},
             {'x_var': 'rjrIsr_PtIsr', 'y_var': 'rjrIsr_RIsr', 'suffix': 'ptISR_vs_RISR'},
-            {'x_var': 'rjrIsr_MsPerp', 'y_var': 'rjrIsr_Rs', 'suffix': 'Mperp_vs_Rs'},
-            {'x_var': 'rjrIsr_PtIsr', 'y_var': 'rjrIsr_Rs', 'suffix': 'ptISR_vs_Rs'}
         ],
-        'branches': ['rjrIsr_Ms', 'rjrIsr_MsPerp', 'rjrIsr_PtIsr', 'rjrIsr_RIsr',
-                     'rjrIsr_Rs', 'rjrIsrPTS', 'rjrIsrSdphiBV',
-                     'rjrIsr_nSVisObjects', 'rjrIsr_nIsrVisObjects'],
-        'baseline_var': 'rjrIsrPTS',
-        'isr_pt_cut_default': 700.0,
+        'branches': ['rjrIsr_PtIsr', 'rjrIsr_RIsr', 'rjrIsr_nSVisObjects'],
+        'isr_pt_cut_default': 300.0,
     }
 
     @classmethod
