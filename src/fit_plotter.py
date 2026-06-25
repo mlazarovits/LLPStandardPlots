@@ -73,9 +73,11 @@ COMPRESSED_FINAL_GLOSSARY = [
 NONCOMPRESSED_FINAL_TOP_LABELS = {
     "lep_sv":          "Lep SV",
     "had_sv":          "Had SV",
-    "delayed_photon":  "#gamma_{d}",
+    "delayed_photon_bh":  "#gamma^{BH}_{d}",
+    "delayed_photon_iso":  "#gamma^{iso}_{d}",
     "one_prompt":      "1#gamma_{p}",
     "two_prompt":      "2#gamma_{p}",
+    "mixed":      "#gamma_{d}+SV",
 }
 
 NONCOMPRESSED_FINAL_GLOSSARY = [
@@ -901,21 +903,34 @@ class FitPlotter:
             channel = "had_sv"
             subgroup = "SR" if "SRGeHad" in grouping_name else "CR"
         elif any(token in bin_name for token in ("BHEarly", "BHLate", "NotBHEarly", "NotBHLate")):
-            channel = "delayed_photon"
-            if "NotBHEarly" in bin_name:
-                subgroup = "!BH-"
-            elif "NotBHLate" in bin_name:
-                subgroup = "!BH+"
-            elif "BHEarly" in bin_name:
-                subgroup = "BH-"
+            if "geq1SV" in bin_name:
+                channel = "mixed"
+                subgroup = "SR" if "SR" in grouping_name else "CR"
             else:
-                subgroup = "BH+"
-        elif "eq1Pho" in bin_name:
+                channel = "delayed_photon_bh"
+                if "NotBHEarly" in bin_name:
+                    subgroup = "!BH-"
+                elif "NotBHLate" in bin_name:
+                    subgroup = "!BH+"
+                    if "TightIso" in bin_name:
+                        subgroup += "TightIso"
+                elif "BHEarly" in bin_name:
+                    subgroup = "BH-"
+                else:
+                    subgroup = "BH+"
+        elif "eq1Pho" in bin_name and "Prompt" in bin_name:
             channel = "one_prompt"
             subgroup = "tight iso" if "TightIsoPrompt" in grouping_name else "med iso"
-        elif "eq2Pho" in bin_name:
+        elif "eq2Pho" in bin_name and "Prompt" in bin_name:
             channel = "two_prompt"
             subgroup = "tight iso" if "TightIsoPrompt" in grouping_name else "med iso"
+        elif "Prompt" not in bin_name and "Iso" in bin_name:
+            channel = "delayed_photon_iso"
+            subgroup = "TightIso" if "TightIso" in grouping_name else "MedIso"
+            if "Early" in grouping_name:
+                subgroup += "-"
+            else:
+                subgroup += "+"
 
         return {
             "channel": channel,
