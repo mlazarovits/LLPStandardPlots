@@ -2,10 +2,20 @@ base_dir: /eos/uscms/store/group/lpcsusylep/anazario/LLPSkims/skims_v49
 
 lumi: 200.0
 energy: 13.6
-flags: [passNHad1SelectionCRLoose, passNLep1SelectionCRLoose]
+analysis_type: uncompressed
 plots: [ratio]
 format: pdf
-output: datamc_v49_run2run3
+output: datamc_promptpho_uncompressed_v49
+
+# CR-only prompt photon selection:
+# - nBaseLinePhotons >= 1
+# - SV_nHadronic == 0 and SV_nLeptonic == 0
+# - all baseline photons satisfy |baseLinePhoton_WTimeSig| < 2.5
+# - all baseline photons satisfy the BigGuy medium-iso pt-dependent ANN window
+# - all baseline photons are barrel photons, |baseLinePhoton_Eta| < 1.479
+flags:
+  - cut: "PROMPT_PHO_CR_UNCOMPRESSED_GE1"
+    region_type: pho
 
 signal:
   - SMS_SVHPM100_v34_gogoGZ_FULLMINI_mGl-2500_mN2-1200_mN1-500_ct0p1_rjrskim.root

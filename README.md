@@ -29,12 +29,13 @@ A flexible plotting framework for Long-Lived Particle (LLP) analyses, designed t
 | `--data` | Data ROOT files or directories (enables Data/MC plots) | No | — |
 | `--input-config` | YAML config file specifying inputs and run parameters | No | — |
 | `--tree` | ROOT tree name | No | `kuSkimTree` |
-| `--flags` | Selection flags (`passN...`) or custom cut strings | No | Tight SR selections |
+| `--flags` | Selection flags (`passN...`) or custom cut strings | No | `passN{Had,Lep}Ge1SelectionHighDxySigSR` |
 | `--labels` | Custom display labels for custom cut regions (1:1 with non-flag entries in `--flags`) | No | — |
 | `--plots` | Plot types: `1d`, `2d`, `ratio`, `unrolled`, `cr_sig`, `all` | No | `all` |
 | `--vars` | Variables to plot in 1D/CR-vs-SR mode (must be in `src/config.py`) | No | Mode-dependent |
 | `--analysis-type` | Analysis type: `uncompressed` or `compressed` | No | `uncompressed` |
 | `--isr-pt-cut` | Minimum p_T(ISR) cut in GeV (compressed mode only) | No | `700` |
+| `--met-cut` | Override the baseline `selCMet` cut in GeV | No | `150` |
 | `--output` | Output file (ROOT) or directory (PDF/PNG) | No | `standard_plots.root` |
 | `--format` | Output format: `root`, `pdf`, `png`, `eps` | No | `root` |
 | `--save-hists` | (ROOT format only) Also write histogram objects alongside canvases | No | False |
@@ -65,6 +66,20 @@ A flexible plotting framework for Long-Lived Particle (LLP) analyses, designed t
 
 Data/MC plots always include `rjr_Ms`, `rjr_Rs`, `selCMet`, `rjrIsr_RIsr`, and `rjrIsr_PtIsr`, plus SV and photon variables determined by the selection flag.
 
+### Baseline selection
+
+Every event must pass `selCMet > 150`, `evtFillWgt < 10`, `Flag_MetFilters == 1`, `Flag_hemVeto == 0`, and the OR of `Trigger_PFMET120_PFMHT120_IDTight`, `Trigger_PFMETNoMu120_PFMHTNoMu120_IDTight`, `Trigger_PFMET120_PFMHT120_IDTight_PFHT60`, and `Trigger_PFMETNoMu120_PFMHTNoMu120_IDTight_PFHT60`, plus `rjrPTS[0] < 150` (uncompressed) or `rjrIsr_nSVisObjects > 0` (compressed). A warning is printed for any file missing one of these branches, since that cut is then not applied.
+
+### Blinding
+
+Data is blinded per region from the selection flags it requires (`== 1`, a bare event flag, or `+`-joined):
+
+- flags ending in `SR` are signal regions; flags ending in `CR`, and all validation flags (`...ValSR`, `...ValCR`), are control regions
+- flags with neither suffix (`passNSVGe1Selection`, `passNSVEq0Selection`, `passNPhoGe1NonPrompt`, `passNPhoGe1SelectionLateSignal`) are inclusive and overlap the SRs
+- a region is blinded if it requires an SR flag, or an inclusive flag without a CR flag (so `passNSVGe1SelectionLowDxySigCR+passNPhoGe1SelectionLateSignal` is shown, `passNPhoGe1SelectionLateSignal` alone is blinded); vetoed flags (`== 0`) are ignored
+
+The same rule applies to custom cut strings. Custom cuts on raw variables only are blinded with `blind: true`. Only `--unblind` overrides the rule.
+
 ### YAML input config
 
 Instead of passing files on the command line, you can use `--input-config` with a YAML file. This also supports per-group options like `combine` (merge files into one sample) and `scale` (per-group event weight multiplier).
@@ -77,6 +92,9 @@ energy: 13.6
 format: pdf
 output: my_plots
 analysis_type: uncompressed
+normalize: true
+global_cuts:
+  - "selCMet > 250"
 
 signal:
   - /eos/.../SMS_*_ct0p1_rjrskim.root        # plain path/glob — scale defaults to 1.0
@@ -105,8 +123,8 @@ data:
       - MET_R18.root
 
 flags:
-  - passNHad1SelectionSRTight
-  - passNLep1SelectionCRLoose
+  - passNHadGe1SelectionHighDxySigSR
+  - passNLepGe1SelectionLowDxySigCR
 
 blind_cuts: [false, false]   # per-flag data blinding for custom cut strings
 ```
@@ -119,7 +137,7 @@ python main.py \
     --signal data/signal_mGl-1500_*.root \
     --background data/QCD_*.root data/WJets_*.root \
     --data data/JetHT_*.root \
-    --flags passNHad1SelectionSRTight passNLep1SelectionCRLoose \
+    --flags passNHadGe1SelectionHighDxySigSR passNLepGe1SelectionLowDxySigCR \
     --plots all \
     --output my_analysis_plots \
     --format pdf \
@@ -137,7 +155,7 @@ python main.py \
 python main.py \
     --input-config config/my_config.yaml \
     --plots ratio cr_sig \
-    --data-flag passNPhoGe1SelectionPromptLooseNotTightIsoCR \
+    --data-flag passNPhoEq1SelectionPromptMedIsoCR \
     --format pdf
 ```
 

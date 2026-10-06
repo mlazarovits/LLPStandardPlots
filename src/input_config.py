@@ -8,10 +8,10 @@ Schema example
 --------------
 lumi: 138.0
 energy: 13.0
-flags: [passNHad1SelectionSRTight]
+flags: [passNHadGe1SelectionHighDxySigSR]
 plots: [1d, 2d, ratio]
 format: pdf
-output: run2_nhad1
+output: run2_nhadge1_sr
 
 signal:
   - /eos/.../SMS_*_ct0p1_rjrskim.root        # plain path/glob — scale defaults to 1.0
@@ -64,9 +64,10 @@ _PARSER_DEFAULTS = {
     'format': 'root',
     'output': 'standard_plots.root',
     'tree': 'kuSkimTree',
-    'flags': ['passNHad1SelectionSRTight', 'passNLep1SelectionSRTight'],
+    'flags': ['passNHadGe1SelectionHighDxySigSR', 'passNLepGe1SelectionHighDxySigSR'],
     'plots': ['all'],
     'analysis_type': 'uncompressed',
+    'normalize': False,
 }
 
 
@@ -115,6 +116,26 @@ def _parse_groups(entries, base_dir=None):
     return groups
 
 
+def _normalize_cut_list(cuts):
+    """Return a flat list of non-empty cut strings from a YAML scalar/list."""
+    if cuts is None:
+        return []
+    if isinstance(cuts, str):
+        return [cuts] if cuts.strip() else []
+    return [str(cut) for cut in cuts if str(cut).strip()]
+
+
+def _is_event_flag(flag_string):
+    return isinstance(flag_string, str) and flag_string.startswith('pass')
+
+
+def _with_global_cuts(cut_string, global_cuts):
+    if not global_cuts or _is_event_flag(cut_string):
+        return cut_string
+    terms = [cut_string] + global_cuts
+    return " & ".join(f"({term})" for term in terms)
+
+
 def _apply_scale(data_dict, scale):
     """Return a new dict with all weight arrays multiplied by scale."""
     if scale == 1.0:
@@ -153,8 +174,12 @@ def load_input_config(yaml_path):
 
     bg_groups = _parse_groups(cfg.get('background', []), base_dir)
     data_groups = _parse_groups(cfg.get('data', []), base_dir)
+    global_cuts = _normalize_cut_list(cfg.get('global_cuts', None))
 
-    override_keys = ('lumi', 'energy', 'plots', 'output', 'tree', 'analysis_type', 'isr_pt_cut')
+    override_keys = (
+        'lumi', 'energy', 'plots', 'vars', 'output', 'tree', 'analysis_type',
+        'isr_pt_cut', 'normalize'
+    )
     overrides = {k: cfg[k] for k in override_keys if k in cfg}
 
     # format: accept "pdf" or ["pdf", "root"] — always store as list
@@ -168,11 +193,11 @@ def load_input_config(yaml_path):
         flag_strings, blind_cuts, region_types = [], [], []
         for entry in raw_flags:
             if isinstance(entry, str):
-                flag_strings.append(entry)
+                flag_strings.append(_with_global_cuts(entry, global_cuts))
                 blind_cuts.append(False)
                 region_types.append(None)
             elif isinstance(entry, dict):
-                flag_strings.append(entry['cut'])
+                flag_strings.append(_with_global_cuts(entry['cut'], global_cuts))
                 blind_cuts.append(bool(entry.get('blind', False)))
                 region_types.append(entry.get('region_type', None))
         overrides['flags'] = flag_strings

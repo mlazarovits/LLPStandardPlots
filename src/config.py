@@ -4,6 +4,7 @@ class AnalysisConfig:
     # Selection Constants
     MET_CUT = 150.0
     RJR_PTS_CUT = 150.0
+    ISR_RISR_CUT = 0.4
     EVT_WGT_CUT = 10.0
     
     # Variable Definitions
@@ -13,7 +14,7 @@ class AnalysisConfig:
         'rjr_Ms': {
             'name': 'ms',                 # Internal short name
             'label': 'M_{S} [TeV]',       # LaTeX label
-            'bins': 50,
+            'bins': 30,
             'range': (0, 10),             # (min, max)
             'scale': 0.001,               # Scale factor (e.g. GeV -> TeV)
             'is_vector': True,            # If it requires the vector loop extraction
@@ -22,7 +23,7 @@ class AnalysisConfig:
         'rjr_Rs': {
             'name': 'rs',
             'label': 'R_{S}',
-            'bins': 50,
+            'bins': 30,
             'range': (0, 1.0),
             'scale': 1.0,
             'is_vector': True,
@@ -40,7 +41,7 @@ class AnalysisConfig:
         'HadronicSV_dxy': {
             'name': 'had_dxy',
             'label': 'd_{xy} [cm]',
-            'bins': 50,
+            'bins': 15,
             'range': (0, 50),
             'scale': 1.0,
             'is_vector': True
@@ -96,7 +97,7 @@ class AnalysisConfig:
         'LeptonicSV_dxy': {
             'name': 'lep_dxy',
             'label': 'd_{xy} [cm]',
-            'bins': 50,
+            'bins': 25,
             'range': (0, 50),
             'scale': 1.0,
             'is_vector': True
@@ -133,6 +134,54 @@ class AnalysisConfig:
             'scale': 1.0,
             'is_vector': True
         },
+        'InclusiveSV_mass': {
+            'name': 'sv_mass',
+            'label': 'mass [GeV]',
+            'bins': 25,
+            'range': (0, 100),
+            'scale': 1.0,
+            'is_vector': True
+        },
+        'InclusiveSV_dxy': {
+            'name': 'sv_dxy',
+            'label': 'd_{xy} [cm]',
+            'bins': 25,
+            'range': (0, 50),
+            'scale': 1.0,
+            'is_vector': True
+        },
+        'InclusiveSV_dxySig': {
+            'name': 'sv_dxysig',
+            'label': 'd_{xy}/#sigma_{d_{xy}}',
+            'bins': 25,
+            'range': (0, 800),
+            'scale': 1.0,
+            'is_vector': True
+        },
+        'InclusiveSV_pOverE': {
+            'name': 'sv_povere',
+            'label': 'p/E',
+            'bins': 25,
+            'range': (0.6, 1),
+            'scale': 1.0,
+            'is_vector': True
+        },
+        'InclusiveSV_decayAngle': {
+            'name': 'sv_decayangle',
+            'label': 'cos#theta_{CM}^{*}',
+            'bins': 25,
+            'range': (-1, 1),
+            'scale': 1.0,
+            'is_vector': True
+        },
+        'InclusiveSV_cosTheta': {
+            'name': 'sv_costheta',
+            'label': 'cos#theta',
+            'bins': 25,
+            'range': (0, 1),
+            'scale': 1.0,
+            'is_vector': True
+        },
         'selCMet': {
             'name': 'met',
             'label': 'p_{T}^{miss} [GeV]',
@@ -141,30 +190,14 @@ class AnalysisConfig:
             'scale': 1.0,
             'is_vector': False
         },
-        'selPhoEta': {
-            'name': 'photon_eta',
-            'label': 'Pseudorapiditiy (#eta)',
-            'bins': 50,
-            'range': (-3.1, 3.1),
+        'nBaseLinePhotons': {
+            'name': 'n_baseline_photons',
+            'label': 'N_{#gamma}',
+            'bins': 3,
+            'range': (0, 3),
             'scale': 1.0,
-            'is_vector': True
+            'is_vector': False
         },
-        'selPhoWTime': {
-            'name': 'photon_time',
-            'label': 'Photon Time [ns]',
-            'bins': 50,
-            'range': (-20., 20.),
-            'scale': 1.0,
-            'is_vector': True
-        },
-        'selPho_beamHaloCNNScore': {
-            'name': 'photon_bh_score',
-            'label': 'Photon Beam Halo Discriminant Score',
-            'bins': 50,
-            'range': (0., 1.),
-            'scale': 1.0,
-            'is_vector': True
-	},
         # ISR variables (compressed scenario)
         'rjrIsr_Ms': {
             'name': 'isr_ms',
@@ -245,7 +278,34 @@ class AnalysisConfig:
             'name': 'photon_wtimesig',
             'label': 't_{#gamma}^{w}/#sigma_{t}',
             'bins': 60,
-            'range': (-5, 10),
+            'range': (-2.5, 2.5),
+            'scale': 1.0,
+            'is_vector': True,
+            'mc_only': False
+        },
+        'baseLinePhoton_Pt': {
+            'name': 'photon_pt',
+            'label': 'p_{T}^{#gamma} [GeV]',
+            'bins': 50,
+            'range': (0, 1000),
+            'scale': 1.0,
+            'is_vector': True,
+            'mc_only': False
+        },
+        'baseLinePhoton_Eta': {
+            'name': 'photon_eta',
+            'label': '#eta_{#gamma}',
+            'bins': 50,
+            'range': (-2.5, 2.5),
+            'scale': 1.0,
+            'is_vector': True,
+            'mc_only': False
+        },
+        'baseLinePhoton_isoANNScore': {
+            'name': 'photon_isoann',
+            'label': 'Photon iso ANN score',
+            'bins': 50,
+            'range': (0, 1),
             'scale': 1.0,
             'is_vector': True,
             'mc_only': False
