@@ -13,7 +13,7 @@ import glob
 from src.style import StyleManager
 from src.loader import DataLoader
 from src.plotter import Plotter1D, Plotter2D, PlotterDataMC
-from src.selections import FinalStateResolver
+from src.selections import FinalStateResolver, is_blinded_selection
 from src.utils import parse_signal_name, parse_background_name
 
 from src.config import AnalysisConfig, AnalysisMode, ModeConfig
@@ -188,6 +188,9 @@ def save_canvas(canvas, output_format, f_out=None, output_dir=None, subdir_path=
     If save_hists=True (ROOT format only), also writes each histogram as a
     standalone object alongside the canvas.
     """
+    if canvas is None:
+        return
+
     if output_format == 'root':
         if f_out is not None:
             canvas.Write()
@@ -213,14 +216,9 @@ def is_event_flag(flag_string):
     """Check if the string is a predefined event flag (starts with 'pass') or a custom cut."""
     return flag_string.startswith('pass')
 
-def is_signal_region(flag_string):
-    """Check if the flag represents a signal region (data should be blinded)."""
-    # SR = Signal Region (blind data), CR = Control Region (show data)
-    return 'SR' in flag_string
-
 def _is_sv_region(flag):
-    """Return True for any SV-based selection flag (hadronic or leptonic)."""
-    return "NHad" in flag or "NLep" in flag
+    """Return True for any SV-based selection flag (hadronic, leptonic or inclusive)."""
+    return "NHad" in flag or "NLep" in flag or ("NSV" in flag and "NSVEq0" not in flag)
 
 def _merge_qcd_gjets(bg_data, combine_fn):
     """Merge GJets entries into QCD for SV region plots.
@@ -263,8 +261,8 @@ def parse_arguments():
     
     # Selections
     parser.add_argument('--flags', nargs='+', default=[
-        'passNHad1SelectionSRTight',
-        'passNLep1SelectionSRTight'
+        'passNHadGe1SelectionHighDxySigSR',
+        'passNLepGe1SelectionHighDxySigSR'
     ], help='List of Final State Flags or custom cut strings to process')
     
     # Plot Types
@@ -282,6 +280,8 @@ def parse_arguments():
                        help='Analysis type: uncompressed (default) or compressed')
     parser.add_argument('--isr-pt-cut', type=float, default=None,
                        help='Minimum pT(ISR) cut in GeV (compressed mode only). Default: 700 when compressed mode is used.')
+    parser.add_argument('--met-cut', type=float, default=None,
+                       help='Override the baseline selCMet cut in GeV (default: 150).')
     parser.add_argument('--workers', type=int, default=1,
                        help='Number of parallel worker processes for file loading (default: 1)')
     parser.add_argument('--verbose', action='store_true', default=False,
@@ -291,7 +291,7 @@ def parse_arguments():
     parser.add_argument('--unblind', action='store_true', help='Bypass data blinding (shows data in all regions including signal regions)')
     parser.add_argument('--data-flag', default=None,
                        help='Flag used to load data files for CR-vs-SR overlay plots '
-                            '(e.g. passNPhoGe1SelectionPromptLooseNotTightIsoCR). '
+                            '(e.g. passNPhoEq1SelectionPromptMedIsoCR). '
                             'Data is loaded with this flag independently of --flags.')
     parser.add_argument('--labels', nargs='+', default=None,
                        help='Custom labels for custom cut regions (1:1 with non-event-flag entries in --flags)')
@@ -329,7 +329,7 @@ def main():
         if not args.data:
             data_groups = config['data_groups']
 
-    if not args.signal:
+    if not args.signal and not args.input_config:
         print("Error: --signal is required when not using --input-config.")
         sys.exit(1)
 
@@ -405,6 +405,9 @@ def main():
     # Keep a single string alias used in a few legacy print statements
     output_format = output_formats[0]
 
+    if args.met_cut is not None:
+        AnalysisConfig.MET_CUT = args.met_cut
+
     # Setup
     style = StyleManager(luminosity=args.lumi, energy=args.energy)
     style.set_style()
@@ -422,12 +425,13 @@ def main():
     event_flags = [flag for flag in args.flags if is_event_flag(flag)]
     custom_cuts = [flag for flag in args.flags if not is_event_flag(flag)]
 
-    # Build per-custom-cut blind list from YAML (default all False)
+    # Build per-custom-cut blind list: explicit 'blind: true' from YAML, or any
+    # cut whose selection flags define a signal region. Only --unblind overrides.
     blind_cuts_all = getattr(args, 'blind_cuts', None) or [False] * len(args.flags)
     if len(blind_cuts_all) < len(args.flags):
         blind_cuts_all += [False] * (len(args.flags) - len(blind_cuts_all))
-    custom_blind_cuts = [blind_cuts_all[i] for i, f in enumerate(args.flags)
-                         if not is_event_flag(f)]
+    custom_blind_cuts = [not args.unblind and (blind_cuts_all[i] or is_blinded_selection(f))
+                         for i, f in enumerate(args.flags) if not is_event_flag(f)]
 
     # Map original custom-cut index → data CustomRegion name; None = blinded (never loaded)
     _di = 0
@@ -488,6 +492,8 @@ def main():
     # Call sites are unchanged — they still pass (canvas, fmt, fout, outdir, ...) but
     # this wrapper ignores those args and uses the closure-captured format list instead.
     def save_canvas(canvas, _fmt, _fout, _outdir, subdir="", cname=None):  # noqa: F811
+        if canvas is None:
+            return
         for fmt in output_formats:
             _save_canvas_impl(canvas, fmt,
                               f_out if fmt == 'root' else None,
@@ -517,7 +523,8 @@ def main():
             'region_type': region_type,
             'sig_data': sig_data_map.get(flag, {}),
             'bg_data': bg_data_map.get(flag, {}),
-            'show_region_label': True
+            'show_region_label': True,
+            'blind_data': not args.unblind and is_blinded_selection(flag),
         })
 
     # Add custom cuts
@@ -547,7 +554,7 @@ def main():
         region_type = item.get('region_type')
 
         # Merge QCD and GJets into a single QCD entry for SV regions by default
-        if region_type == 'sv' and not args.no_merge_qcd_gjets:
+        if region_type in ('sv', 'inclusive-sv') and not args.no_merge_qcd_gjets:
             current_bg_data = _merge_qcd_gjets(current_bg_data, loader.combine_data)
 
         show_region_label = item['show_region_label']
@@ -615,7 +622,7 @@ def main():
             if args.unblind:
                 blind_data = False  # Override blinding if --unblind flag is set
             else:
-                blind_data = is_signal_region(flag) or item.get('blind_data', False)
+                blind_data = item['blind_data']
             
             # Determine variable set based on final state (like datamc_batch_process.py)
             datamc_vars = []
@@ -643,9 +650,14 @@ def main():
                         datamc_vars.extend(hadSV_vars + lepSV_vars)
                 else:
                     datamc_vars.extend(hadSV_vars + lepSV_vars)
+            elif region_type == 'inclusive-sv':
+                datamc_vars.extend([
+                    'InclusiveSV_mass', 'InclusiveSV_dxy', 'InclusiveSV_dxySig',
+                    'InclusiveSV_pOverE', 'InclusiveSV_decayAngle', 'InclusiveSV_cosTheta'
+                ])
             elif region_type == 'pho':
                 # mc_only variables (Gen-level) excluded — not present in data files
-                photon_vars = [
+                photon_vars = ['nBaseLinePhotons'] + [
                     v for v, c in AnalysisConfig.VARIABLES.items()
                     if v.startswith('baseLinePhoton_') and not c.get('mc_only', False)
                 ]
@@ -668,7 +680,8 @@ def main():
                         nbins, xmin, xmax, blind_data=blind_data, 
                         final_state_label=fs_label_latex, suffix=flag
                     )
-                    save_canvas(canvas, output_format, f_out, output_dir, datamc_subdir)
+                    if canvas:
+                        save_canvas(canvas, output_format, f_out, output_dir, datamc_subdir)
             
             # Return to parent directory
             if use_root_file:
@@ -700,7 +713,8 @@ def main():
                             nbins, xmin, xmax, blind_data=blind_data, 
                             final_state_label=fs_label_latex, suffix=flag, normalized=True
                         )
-                        save_canvas(canvas_norm, output_format, f_out, output_dir, datamc_norm_subdir)
+                        if canvas_norm:
+                            save_canvas(canvas_norm, output_format, f_out, output_dir, datamc_norm_subdir)
                 
                 # Return to parent directory
                 if use_root_file:
@@ -716,7 +730,7 @@ def main():
             if args.unblind:
                 blind_data = False
             else:
-                blind_data = is_signal_region(flag) or item.get('blind_data', False)
+                blind_data = item['blind_data']
 
             # Create directories once before the loop
             if use_root_file:
@@ -740,7 +754,8 @@ def main():
                     suffix=f"{flag}_{scheme}",
                     normalized=False
                 )
-                save_canvas(canvas, output_format, f_out, output_dir, unrolled_subdir)
+                if canvas:
+                    save_canvas(canvas, output_format, f_out, output_dir, unrolled_subdir)
 
                 if use_root_file:
                     fs_dir.cd()
@@ -758,7 +773,8 @@ def main():
                         suffix=f"{flag}_{scheme}",
                         normalized=True
                     )
-                    save_canvas(canvas_norm, output_format, f_out, output_dir, unrolled_norm_subdir)
+                    if canvas_norm:
+                        save_canvas(canvas_norm, output_format, f_out, output_dir, unrolled_norm_subdir)
 
                     if use_root_file:
                         fs_dir.cd()
@@ -823,7 +839,7 @@ def main():
                 # 1. Current flag (CR only): data loaded under the same flag as signal/bg
                 # 2. --data-flag CR collection (if provided and different from current flag)
                 data_2d_cases = []
-                if current_data_data and not (is_signal_region(flag) or item.get('blind_data', False)):
+                if current_data_data and not item['blind_data']:
                     data_2d_cases.append((
                         current_data_data, fs_label_latex,
                         f"data_2d_{flag}_{suffix}"
@@ -874,18 +890,28 @@ def main():
                 # 1. All Signals
                 if current_sig_data:
                     c_sig = plotter1d.plot_collection(current_sig_data, short_name, label, nbins, xmin, xmax, collection_type="Signal", normalized=args.normalize, suffix=flag, final_state_label=fs_label_latex)
-                    save_canvas(c_sig, output_format, f_out, output_dir, plots_1d_subdir)
+                    if c_sig:
+                        save_canvas(c_sig, output_format, f_out, output_dir, plots_1d_subdir)
                 
                 # 2. All Backgrounds
                 if current_bg_data:
                     c_bg = plotter1d.plot_collection(current_bg_data, short_name, label, nbins, xmin, xmax, collection_type="Background", normalized=args.normalize, suffix=flag, final_state_label=fs_label_latex)
-                    save_canvas(c_bg, output_format, f_out, output_dir, plots_1d_subdir)
+                    if c_bg:
+                        save_canvas(c_bg, output_format, f_out, output_dir, plots_1d_subdir)
                     
                 # 3. Signal vs Net Background
                 if current_sig_data and current_bg_combined:
                     c_comp, _, _ = plotter1d.plot_signals_vs_net_background(current_sig_data, current_bg_combined, short_name, label, nbins, xmin, xmax, args.normalize, suffix=flag, final_state_label=fs_label_latex)
-                    save_canvas(c_comp, output_format, f_out, output_dir, plots_1d_subdir)
-                    
+                    if c_comp:
+                        save_canvas(c_comp, output_format, f_out, output_dir, plots_1d_subdir)
+
+                # 4. Data (CR only — skip blinded regions)
+                _blind_1d = item['blind_data']
+                if current_data_data and not _blind_1d:
+                    c_data = plotter1d.plot_collection(current_data_data, short_name, label, nbins, xmin, xmax, collection_type="Data", normalized=args.normalize, suffix=flag, final_state_label=fs_label_latex)
+                    if c_data:
+                        save_canvas(c_data, output_format, f_out, output_dir, plots_1d_subdir)
+
             # Return to parent directory
             if use_root_file:
                 fs_dir.cd()
@@ -924,7 +950,8 @@ def main():
                         cr_label=cr_label, suffix=flag,
                         final_state_label=fs_label_latex
                     )
-                    save_canvas(canvas, output_format, f_out, output_dir, cr_sig_subdir)
+                    if canvas:
+                        save_canvas(canvas, output_format, f_out, output_dir, cr_sig_subdir)
 
                 if use_root_file:
                     fs_dir.cd()

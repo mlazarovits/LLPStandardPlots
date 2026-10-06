@@ -5,6 +5,7 @@ import ROOT
 import re
 from collections import namedtuple
 from src.style import StyleManager
+from src.plotter import PlotterDataMC
 
 # ── Bin label tables ──────────────────────────────────────────────────────────
 
@@ -57,7 +58,8 @@ COMPRESSED_FINAL_RISR_LABELS = {
     "SVonly":    {"00": "lo",  "10": "med", "20": "hi", "30": "hi+"},
     "DelPho":    {"10": "med", "00": "hi",  "20": "hi", "30": "hi+"},
     "Eq2Pho":    {"00": "lo",  "10": "med", "20": "hi", "30": "hi+"},
-    "MixDel":    {"10": "med", "00": "hi",  "20": "hi", "30": "hi+"},
+    "MixDel":     {"10": "med", "00": "hi",  "20": "hi", "30": "hi+"},  # ABCD
+    "MixDel_STF": {"00": "lo",  "10": "med", "20": "hi", "30": "hi+"},  # shape_transfer
     "MixPrompt": {"00": "lo",  "10": "med", "20": "hi", "30": "hi+"},
 }
 
@@ -74,15 +76,32 @@ NONCOMPRESSED_FINAL_TOP_LABELS = {
     "delayed_photon":  "#gamma_{d}",
     "one_prompt":      "1#gamma_{p}",
     "two_prompt":      "2#gamma_{p}",
+    "sv_delayed_photon": "SV+#gamma_{d}",
 }
 
 NONCOMPRESSED_FINAL_GLOSSARY = [
-    ("#gamma_{d}", ("M #geq 2.0 TeV; R #geq 0.3",)),
+    ("#gamma_{d}", ("M: [2.0,2.6), #geq 2.6", "R: [0.15,0.35), #geq 0.35")),
+    ("SV+#gamma_{d}", ("M #geq 2.0 TeV", "R: [0.15,0.3), #geq 0.3")),
     ("Lep SV", ("M: [2.0,2.6), #geq 2.6", "R: [0.15,0.3), #geq 0.3")),
     ("Had SV", ("M: [2.0,2.6), [2.6,3.0), #geq 3.0", "R: [0.15,0.35), #geq 0.35")),
     ("1#gamma_{p}", ("M: [2.5,2.7), #geq 2.7", "R: <0.35, [0.35,0.45), #geq 0.45")),
     ("2#gamma_{p}", ("M: [2.5,2.7), #geq 2.7", "R: <0.3, #geq 0.3")),
 ]
+
+# (ROOT colour name, colour offset, line style) of each overlaid signal, in --signal
+# order.  Colour names are resolved at draw time so importing needs no real ROOT.
+SIGNAL_STYLES = [
+    ("kRed",     1, 1),
+    ("kMagenta", 2, 2),
+    ("kGreen",   3, 7),
+    ("kOrange",  7, 9),
+]
+
+# Text-size knobs for the dense delayed-photon combined plot.
+COMBINED_RISR_BIN_LABEL_SIZE = 0.085
+COMBINED_MR_BIN_LABEL_SIZE = 0.056
+COMBINED_GROUP_LABEL_SIZE = 0.056
+COMBINED_SUBGROUP_LABEL_SIZE = 0.060
 
 CHANNEL_LABELS = {
     # Compressed shape_transfer
@@ -112,6 +131,13 @@ CHANNEL_LABELS = {
     "DelPho_BHLate":      "#gamma t_{+}^{BH}",
     "DelPho_NotBHEarly":  "#gamma t_{-}^{!BH}",
     "DelPho_NotBHLate":   "#gamma t_{+}^{!BH}",
+    "DelPho_BHEarlyCR":     "#gamma t_{-}^{BH}",
+    "DelPho_BHLateCR":      "#gamma t_{+}^{BH}",
+    "DelPho_NotBHEarlyCR":  "#gamma t_{-}^{!BH}",
+    "DelPho_NotBHLateSR":   "#gamma t_{+}^{!BH}",
+    "DelPho_MedIsoEarlyCR": "#gamma MedIso t_{-}",
+    "DelPho_MedIsoLateCR":  "#gamma MedIso t_{+}",
+    "DelPho_TightIsoEarlyCR": "#gamma TightIso",
     "MixDel_BHEarly":     "SV+#gamma t_{-}^{BH}",
     "MixDel_BHLate":      "SV+#gamma t_{+}^{BH}",
     "MixDel_NotBHEarly":  "SV+#gamma t_{-}^{!BH}",
@@ -143,6 +169,13 @@ COMBINED_CHANNEL_LABELS = {
     "DelPho_BHLate":      "#gamma, t_{+}^{BH}",
     "DelPho_NotBHEarly":  "#gamma, t_{-}^{!BH}",
     "DelPho_NotBHLate":   "#gamma, t_{+}^{!BH}",
+    "DelPho_BHEarlyCR":     "#gamma, t_{-}^{BH}",
+    "DelPho_BHLateCR":      "#gamma, t_{+}^{BH}",
+    "DelPho_NotBHEarlyCR":  "#gamma, t_{-}^{!BH}",
+    "DelPho_NotBHLateSR":   "#gamma, t_{+}^{!BH}",
+    "DelPho_MedIsoEarlyCR": "#gamma, MedIso-",
+    "DelPho_MedIsoLateCR":  "#gamma, MedIso+",
+    "DelPho_TightIsoEarlyCR": "#gamma, TightIso",
     "MixDel_BHEarly":     "SV+#gamma, t_{-}^{BH}",
     "MixDel_BHLate":      "SV+#gamma, t_{+}^{BH}",
     "MixDel_NotBHEarly":  "SV+#gamma, t_{-}^{!BH}",
@@ -168,6 +201,17 @@ def _uid():
     return _canvas_counter[0]
 
 
+def _datamc_background_key(process_name: str) -> str:
+    """Map Combine/SampleTool process names onto labels known by PlotterDataMC."""
+    label_map = {
+        "Wjets": "WJets",
+        "Zjets": "ZJets",
+        "Gjets": "GJets",
+        "Top": "TTJets",
+    }
+    return label_map.get(process_name, process_name)
+
+
 def _compressed_display_key(bin_name: str) -> str:
     if bin_name.startswith("Val_"):
         return bin_name[len("Val_"):]
@@ -182,6 +226,10 @@ def _noncompressed_suffix(bin_name: str) -> str:
 def _noncompressed_mr_label(suffix: str, channel: str = "") -> str:
     if channel == "delayed_photon":
         return "#splitline{M}{R}"
+    if channel == "sv_delayed_photon":
+        # M_S inclusive (>= 2 TeV); only R_S is binned: suffix 00 = [0.15, 0.3), 01 = >= 0.3
+        rs = {"0": "R^{-}", "1": "R^{+}"}.get(suffix[-1:], "R^{" + suffix[-1:] + "}")
+        return f"#splitline{{M}}{{{rs}}}"
     if len(suffix) != 2 or not suffix.isdigit():
         return suffix
     ms_labels = {"0": "M^{-}", "1": "M^{+}", "2": "M^{++}" if channel == "had_sv" else "M^{2}"}
@@ -246,6 +294,7 @@ class FitPlotter:
     def __init__(self, luminosity=136, energy=13):
         self.style = StyleManager(luminosity=luminosity, energy=energy)
         self.style.set_style()
+        self.datamc_plotter = PlotterDataMC(self.style)
         self.luminosity = luminosity
         self.energy = energy
 
@@ -253,16 +302,30 @@ class FitPlotter:
 
     def plot_all(self, fit_result_path, fit_config_path, output_prefix="fit",
                  output_format="pdf", mode_override=None, label_scheme="auto",
-                 show_sr=False):
+                 show_sr=False, data_mc=False, signals=None):
+        """signals: [(label, fitDiagnostics path), ...] whose prefit total_signal is
+        overlaid as lines on the standard (non --data-mc) canvases."""
         cfg = self._load_config(fit_config_path, mode_override)
         f   = uproot.open(fit_result_path)
+        if signals and data_mc:
+            print("[FitPlotter] --signal is not drawn on --data-mc canvases")
+        sig_files = [] if data_mc else [(label, uproot.open(path)) for label, path in (signals or [])]
 
         print(f"[FitPlotter] mode={cfg.mode} | "
               f"{len(cfg.shape_bin_order)} shape channels"
               + (f" | {len(cfg.abcd_bin_order)} ABCD channels" if cfg.abcd_bin_order else ""))
 
+        delpho_abcd_regions = self._ordered_delpho_abcd_regions(cfg)
+        use_delpho_abcd_layout = bool(delpho_abcd_regions)
+        abcd_bin_order = (
+            [(ch, bins) for _, ch, bins in delpho_abcd_regions]
+            if use_delpho_abcd_layout else cfg.abcd_bin_order
+        )
+
         if label_scheme == "auto" and cfg.mode == "uncompressed" and self._has_noncompressed_final_bins(cfg):
             label_scheme = "noncompressed-final"
+        elif label_scheme == "auto" and cfg.mode == "compressed" and self._has_compressed_final_bins(cfg):
+            label_scheme = "compressed-final"
         print(f"[FitPlotter] label_scheme={label_scheme}")
 
         use_cf_labels = (label_scheme == "compressed-final")
@@ -272,11 +335,19 @@ class FitPlotter:
 
         pre_shape  = self._extract_yields(f, "shapes_prefit", shape_all_bins)
         post_shape = self._extract_yields(f, "shapes_fit_b",  shape_all_bins)
+        sig_shape  = [(label, self._extract_signal(sf, shape_all_bins)) for label, sf in sig_files]
+        if data_mc:
+            pre_shape_stack = self._extract_stack_hists(f, "shapes_prefit", shape_all_bins, "shape_prefit")
+            post_shape_stack = self._extract_stack_hists(f, "shapes_fit_b", shape_all_bins, "shape_postfit")
 
-        if cfg.abcd_bin_order:
-            abcd_all_bins = [b for _, bins in cfg.abcd_bin_order for b in bins]
+        if abcd_bin_order:
+            abcd_all_bins = [b for _, bins in abcd_bin_order for b in bins]
             pre_abcd  = self._extract_yields(f, "shapes_prefit", abcd_all_bins)
             post_abcd = self._extract_yields(f, "shapes_fit_b",  abcd_all_bins)
+            sig_abcd  = [(label, self._extract_signal(sf, abcd_all_bins)) for label, sf in sig_files]
+            if data_mc:
+                pre_abcd_stack = self._extract_stack_hists(f, "shapes_prefit", abcd_all_bins, "abcd_prefit")
+                post_abcd_stack = self._extract_stack_hists(f, "shapes_fit_b", abcd_all_bins, "abcd_postfit")
 
         # Collect (canvas_pre, canvas_post, short_name) for all plots, then
         # flush to a single ROOT file or individual image files at the end.
@@ -290,8 +361,8 @@ class FitPlotter:
         else:
             shape_deco = self._build_decorations(cfg.shape_bin_order, bin_scheme)
         plots.append((
-            self._draw_standard_canvas(*pre_shape,  shape_deco, f"shp_pre_{_uid()}",  "Prefit"),
-            self._draw_standard_canvas(*post_shape, shape_deco, f"shp_pst_{_uid()}", "Postfit"),
+            self._draw_datamc_canvas(pre_shape_stack, shape_deco, f"shp_pre_{_uid()}", "Prefit") if data_mc else self._draw_standard_canvas(*pre_shape,  shape_deco, f"shp_pre_{_uid()}",  "Prefit", signals=sig_shape),
+            self._draw_datamc_canvas(post_shape_stack, shape_deco, f"shp_pst_{_uid()}", "Postfit") if data_mc else self._draw_standard_canvas(*post_shape, shape_deco, f"shp_pst_{_uid()}", "Postfit", signals=sig_shape),
             "shape",
         ))
 
@@ -308,6 +379,14 @@ class FitPlotter:
                 a_post = tuple(arr[ai:ai+na] for arr in post_shape)
                 b_pre  = tuple(arr[bi:bi+nb] for arr in pre_shape)
                 b_post = tuple(arr[bi:bi+nb] for arr in post_shape)
+                a_sig  = [(label, arr[ai:ai+na]) for label, arr in sig_shape]
+                b_sig  = [(label, arr[bi:bi+nb]) for label, arr in sig_shape]
+                tog_sig = [(label, np.concatenate([a, b])) for (label, a), (_, b) in zip(a_sig, b_sig)]
+                if data_mc:
+                    a_pre_stack = self._slice_hist_bundle(pre_shape_stack, ai, na, f"a_pre_{_uid()}")
+                    a_post_stack = self._slice_hist_bundle(post_shape_stack, ai, na, f"a_post_{_uid()}")
+                    b_pre_stack = self._slice_hist_bundle(pre_shape_stack, bi, nb, f"b_pre_{_uid()}")
+                    b_post_stack = self._slice_hist_bundle(post_shape_stack, bi, nb, f"b_post_{_uid()}")
 
                 tag       = f"{self._ch_short(anchor_ch)}_{self._ch_short(buoy_ch)}"
                 pair_ord  = [(anchor_ch, anchor_bins), (buoy_ch, buoy_bins)]
@@ -319,12 +398,18 @@ class FitPlotter:
                     pair_deco = self._build_decorations(pair_ord, bin_scheme)
                 tog_pre   = tuple(np.concatenate([a, b]) for a, b in zip(a_pre,  b_pre))
                 tog_post  = tuple(np.concatenate([a, b]) for a, b in zip(a_post, b_post))
+                if data_mc:
+                    tog_pre_stack = self._concat_hist_bundles(a_pre_stack, b_pre_stack, f"tog_pre_{_uid()}")
+                    tog_post_stack = self._concat_hist_bundles(a_post_stack, b_post_stack, f"tog_post_{_uid()}")
 
                 plots.append((
-                    self._draw_standard_canvas(*tog_pre,  pair_deco, f"tog_pre_{_uid()}",  "Prefit"),
-                    self._draw_standard_canvas(*tog_post, pair_deco, f"tog_pst_{_uid()}", "Postfit"),
+                    self._draw_datamc_canvas(tog_pre_stack, pair_deco, f"tog_pre_{_uid()}", "Prefit") if data_mc else self._draw_standard_canvas(*tog_pre,  pair_deco, f"tog_pre_{_uid()}",  "Prefit", signals=tog_sig),
+                    self._draw_datamc_canvas(tog_post_stack, pair_deco, f"tog_pst_{_uid()}", "Postfit") if data_mc else self._draw_standard_canvas(*tog_post, pair_deco, f"tog_pst_{_uid()}", "Postfit", signals=tog_sig),
                     f"pair_{tag}_together",
                 ))
+
+                if data_mc:
+                    continue
 
                 if use_cf_labels:
                     a_deco = self._build_compressed_final_decorations([(anchor_ch, anchor_bins)])
@@ -337,51 +422,67 @@ class FitPlotter:
                     b_deco = self._build_decorations([(buoy_ch,   buoy_bins)],   bin_scheme)
                 plots.append((
                     self._draw_sidebyside_canvas(*a_pre,  *b_pre,  a_deco, b_deco,
-                                                 f"sbs_pre_{_uid()}",  "Prefit"),
+                                                 f"sbs_pre_{_uid()}",  "Prefit",
+                                                 a_signals=a_sig, b_signals=b_sig),
                     self._draw_sidebyside_canvas(*a_post, *b_post, a_deco, b_deco,
-                                                 f"sbs_pst_{_uid()}", "Postfit"),
+                                                 f"sbs_pst_{_uid()}", "Postfit",
+                                                 a_signals=a_sig, b_signals=b_sig),
                     f"pair_{tag}_sidebyside",
                 ))
 
         # ── ABCD plots (uncompressed only) ────────────────────────────────────
-        if cfg.abcd_bin_order:
-            # Single-bin ABCD cells (compressed) use compact R_ISR label; multi-bin uses Ms
-            abcd_scheme = "ms_delayed" if max(len(b) for _, b in cfg.abcd_bin_order) > 1 else "abcd"
-            if use_cf_labels:
-                abcd_flat_deco = self._build_compressed_final_decorations(cfg.abcd_bin_order)
-            elif use_ncf_labels:
-                abcd_flat_deco = self._build_noncompressed_final_decorations(cfg.abcd_bin_order)
+        if abcd_bin_order:
+            multi_bin_abcd = max(len(b) for _, b in abcd_bin_order) > 1
+            if cfg.mode == "uncompressed":
+                abcd_scheme = "ms_delayed" if multi_bin_abcd else "abcd"
             else:
-                abcd_flat_deco = self._build_decorations(cfg.abcd_bin_order, abcd_scheme)
+                # Compressed multi-bin ABCD cells carry R_ISR bins, not M_S bins
+                abcd_scheme = "risr" if multi_bin_abcd else "abcd"
+            if use_delpho_abcd_layout:
+                abcd_flat_deco = self._build_delpho_abcd_decorations(delpho_abcd_regions, cfg.mode)
+            elif use_cf_labels:
+                abcd_flat_deco = self._build_compressed_final_decorations(abcd_bin_order)
+            elif use_ncf_labels:
+                abcd_flat_deco = self._build_noncompressed_final_decorations(abcd_bin_order)
+            else:
+                abcd_flat_deco = self._build_decorations(abcd_bin_order, abcd_scheme)
             plots.append((
-                self._draw_standard_canvas(*pre_abcd,  abcd_flat_deco, f"abf_pre_{_uid()}",  "Prefit"),
-                self._draw_standard_canvas(*post_abcd, abcd_flat_deco, f"abf_pst_{_uid()}", "Postfit"),
+                self._draw_datamc_canvas(pre_abcd_stack, abcd_flat_deco, f"abf_pre_{_uid()}", "Prefit") if data_mc else self._draw_standard_canvas(*pre_abcd,  abcd_flat_deco, f"abf_pre_{_uid()}",  "Prefit", signals=sig_abcd),
+                self._draw_datamc_canvas(post_abcd_stack, abcd_flat_deco, f"abf_pst_{_uid()}", "Postfit") if data_mc else self._draw_standard_canvas(*post_abcd, abcd_flat_deco, f"abf_pst_{_uid()}", "Postfit", signals=sig_abcd),
                 "abcd_flat",
             ))
 
-            sr_ch = (next(iter(cfg.abcd_pairs)) if cfg.abcd_pairs else None) if show_sr else None
-            if use_cf_labels:
-                abcd_grid_deco = self._build_compressed_final_decorations(cfg.abcd_bin_order, sr_ch=sr_ch)
+            sr_ch = show_sr  # True → color any channel whose name contains "SR"
+            if use_delpho_abcd_layout:
+                abcd_grid_deco = self._build_delpho_abcd_decorations(delpho_abcd_regions, cfg.mode, sr_ch=sr_ch)
+            elif use_cf_labels:
+                abcd_grid_deco = self._build_compressed_final_decorations(abcd_bin_order, sr_ch=sr_ch)
             elif use_ncf_labels:
-                abcd_grid_deco = self._build_noncompressed_final_decorations(cfg.abcd_bin_order, sr_ch=sr_ch)
+                abcd_grid_deco = self._build_noncompressed_final_decorations(abcd_bin_order, sr_ch=sr_ch)
             else:
-                abcd_grid_deco = self._build_abcd_grid_decorations(cfg.abcd_bin_order, sr_ch=sr_ch)
+                abcd_grid_deco = self._build_abcd_grid_decorations(abcd_bin_order, sr_ch=sr_ch, mode=cfg.mode)
             plots.append((
-                self._draw_standard_canvas(*pre_abcd,  abcd_grid_deco, f"abg_pre_{_uid()}",  "Prefit"),
-                self._draw_standard_canvas(*post_abcd, abcd_grid_deco, f"abg_pst_{_uid()}", "Postfit"),
+                self._draw_datamc_canvas(pre_abcd_stack, abcd_grid_deco, f"abg_pre_{_uid()}", "Prefit") if data_mc else self._draw_standard_canvas(*pre_abcd,  abcd_grid_deco, f"abg_pre_{_uid()}",  "Prefit", signals=sig_abcd),
+                self._draw_datamc_canvas(post_abcd_stack, abcd_grid_deco, f"abg_pst_{_uid()}", "Postfit") if data_mc else self._draw_standard_canvas(*post_abcd, abcd_grid_deco, f"abg_pst_{_uid()}", "Postfit", signals=sig_abcd),
                 "abcd_grid",
             ))
 
             comb_deco  = self._build_combined_decorations(
-                cfg.abcd_bin_order, cfg.shape_bin_order, sr_ch=sr_ch,
+                abcd_bin_order, cfg.shape_bin_order, sr_ch=sr_ch,
                 shape_bin_scheme=bin_scheme, abcd_bin_scheme=abcd_scheme,
                 label_scheme=label_scheme,
+                delpho_abcd_regions=delpho_abcd_regions if use_delpho_abcd_layout else None,
+                mode=cfg.mode,
             )
             comb_pre   = tuple(np.concatenate([a, s]) for a, s in zip(pre_abcd,  pre_shape))
             comb_post  = tuple(np.concatenate([a, s]) for a, s in zip(post_abcd, post_shape))
+            comb_sig   = [(label, np.concatenate([a, s])) for (label, a), (_, s) in zip(sig_abcd, sig_shape)]
+            if data_mc:
+                comb_pre_stack = self._concat_hist_bundles(pre_abcd_stack, pre_shape_stack, f"cmb_pre_{_uid()}")
+                comb_post_stack = self._concat_hist_bundles(post_abcd_stack, post_shape_stack, f"cmb_post_{_uid()}")
             plots.append((
-                self._draw_standard_canvas(*comb_pre,  comb_deco, f"cmb_pre_{_uid()}",  "Prefit",  right_panel=True),
-                self._draw_standard_canvas(*comb_post, comb_deco, f"cmb_pst_{_uid()}", "Postfit", right_panel=True),
+                self._draw_datamc_canvas(comb_pre_stack, comb_deco, f"cmb_pre_{_uid()}", "Prefit", right_panel=True) if data_mc else self._draw_standard_canvas(*comb_pre,  comb_deco, f"cmb_pre_{_uid()}",  "Prefit",  right_panel=True, signals=comb_sig),
+                self._draw_datamc_canvas(comb_post_stack, comb_deco, f"cmb_pst_{_uid()}", "Postfit", right_panel=True) if data_mc else self._draw_standard_canvas(*comb_post, comb_deco, f"cmb_pst_{_uid()}", "Postfit", right_panel=True, signals=comb_sig),
                 "combined",
             ))
 
@@ -434,16 +535,138 @@ class FitPlotter:
             "geq1PhoBHLate",
             "geq1PhoNotBHEarly",
             "geq1PhoNotBHLate",
+            "geq1PhoMedIsoEarly",
+            "geq1PhoMedIsoLate",
+            "geq1PhoTightIsoEarly",
             "eq1Pho",
             "eq2Pho",
         )
         return any(any(token in b for token in final_tokens) for b in bin_names)
 
+    def _is_delpho_nested_abcd(self, cfg):
+        return bool(self._ordered_delpho_abcd_regions(cfg))
+
+    def _has_compressed_final_bins(self, cfg):
+        names = [
+            name
+            for bin_order in (cfg.shape_bin_order, cfg.abcd_bin_order)
+            for ch, bins in bin_order
+            for name in [ch] + list(bins)
+        ]
+        return any(
+            name.startswith(("SVonly", "DelPho", "Eq2Pho", "MixDel", "MixPrompt", "SVDelPho", "SVNoDelPho"))
+            for name in names
+        )
+
+    def _delpho_region_role(self, name):
+        text = name.lower()
+        notbh = "notbh" in text
+        if "notbhearly" in text:
+            return "notbh_early"
+        if "notbhlate" in text or ("sr" in text and notbh):
+            return "sr"
+        if "bhearly" in text and not notbh:
+            return "bh_early"
+        if "bhlate" in text and not notbh:
+            return "bh_late"
+        if "medisoearly" in text:
+            return "mediso_early"
+        if "medisolate" in text:
+            return "mediso_late"
+        if "tightisoearly" in text:
+            return "tightiso_early"
+        return None
+
+    def _ordered_delpho_abcd_regions(self, cfg):
+        """
+        Return the semantic delayed-photon ABCD order for nested LLPCombine configs.
+
+        The YAML association lists are intentionally not trusted for ordering;
+        they only identify the nested ABCD structure and its SR channel.
+        """
+        if not cfg.abcd_pairs or not cfg.abcd_bin_order:
+            return []
+
+        nested_sr = None
+        nested_assoc = None
+        for sr_ch, assoc in cfg.abcd_pairs.items():
+            if isinstance(assoc, dict) and {"bkgbh", "bkgprompt"}.issubset(assoc):
+                nested_sr = sr_ch
+                nested_assoc = assoc
+                break
+        if nested_assoc is None:
+            return []
+
+        bin_map = dict(cfg.abcd_bin_order)
+        associated = {nested_sr}
+        for key in ("bkgbh", "bkgprompt"):
+            vals = nested_assoc.get(key) or []
+            if isinstance(vals, (list, tuple)):
+                associated.update(vals)
+
+        role_to_key = {}
+
+        def consider(ch, preferred=False):
+            haystack = " ".join([ch] + list(bin_map.get(ch, [])))
+            role = self._delpho_region_role(haystack)
+            if role and (preferred or role not in role_to_key):
+                role_to_key[role] = ch
+
+        for ch in cfg.abcd_bin_order:
+            key = ch[0]
+            if key in associated:
+                consider(key, preferred=True)
+        for key in bin_map:
+            consider(key)
+
+        if nested_sr in bin_map:
+            role_to_key["sr"] = nested_sr
+        elif "sr" not in role_to_key:
+            for key in bin_map:
+                if self._delpho_region_role(" ".join([key] + list(bin_map[key]))) == "sr":
+                    role_to_key["sr"] = key
+                    break
+
+        ordered = [
+            ("BH-", "bh_early"),
+            ("BH+", "bh_late"),
+            ("!BH-", "notbh_early"),
+            ("#splitline{!BH+}{TightIso}", "sr"),
+            ("MedIso-", "mediso_early"),
+            ("MedIso+", "mediso_late"),
+            ("TightIso", "tightiso_early"),
+        ]
+        if any(role not in role_to_key for _, role in ordered):
+            return []
+        return [(label, role_to_key[role], bin_map[role_to_key[role]]) for label, role in ordered]
+
     # ── Yield extraction ──────────────────────────────────────────────────────
+
+    def _resolve_bin_names(self, uf, folder, bin_list):
+        """Map config bin names to actual names in the ROOT file.
+
+        Combine/Higgs tools prefix bin directories with the signal point name
+        (e.g. gogoGZ_2300_2200_2100_10_SVonly_AnchorCR00).  This method finds
+        the matching key regardless of whether a prefix is present.
+        """
+        available = {k.split(";")[0] for k in uf[folder].keys()}
+        resolved = []
+        for bn in bin_list:
+            if bn in available:
+                resolved.append(bn)
+            else:
+                match = next((k for k in available if k.endswith(f"_{bn}")), None)
+                if match is None:
+                    raise uproot.exceptions.KeyInFileError(
+                        f"Cannot find bin '{bn}' in folder '{folder}'"
+                    )
+                resolved.append(match)
+        return resolved
 
     def _extract_yields(self, uf, folder, bin_list):
         bkg, berr, dy, eyl, eyh = [], [], [], [], []
-        for bn in bin_list:
+        resolved = self._resolve_bin_names(uf, folder, bin_list)
+        for bn in resolved:
             h = uf[f"{folder}/{bn}/total_background"]
             g = uf[f"{folder}/{bn}/data"]
             bkg.append(float(h.values()[0]))
@@ -453,6 +676,118 @@ class FitPlotter:
             eyh.append(float(g.member("fEYhigh")[0]))
         return (np.array(bkg), np.array(berr),
                 np.array(dy),  np.array(eyl), np.array(eyh))
+
+    def _extract_signal(self, uf, bin_list, folder="shapes_prefit"):
+        """total_signal per bin.  Prefit by default: shapes_fit_b has r=0 (signal
+        identically 0) and shapes_fit_s scales it by the fitted r."""
+        resolved = self._resolve_bin_names(uf, folder, bin_list)
+        vals = []
+        for bn in resolved:
+            path = f"{folder}/{bn}/total_signal"
+            vals.append(float(uf[path].values()[0]) if path in uf else 0.0)
+        return np.array(vals)
+
+    def _shape_processes(self, uf, folder, resolved_bins):
+        skip = {"data", "total", "total_background", "total_signal", "total_covar", "overall_total_covar"}
+        processes = []
+        seen = set()
+        for bn in resolved_bins:
+            for key in uf[f"{folder}/{bn}"].keys():
+                proc = key.split(";")[0]
+                if proc in skip or proc in seen:
+                    continue
+                seen.add(proc)
+                processes.append(proc)
+        preferred = ["QCD", "Wjets", "WJets", "Zjets", "ZJets", "Top", "TTJets", "TTXJets", "Gjets", "GJets"]
+        rank = {name: i for i, name in enumerate(preferred)}
+        return sorted(processes, key=lambda p: (rank.get(p, len(rank)), p))
+
+    def _extract_stack_hists(self, uf, folder, bin_list, name):
+        resolved = self._resolve_bin_names(uf, folder, bin_list)
+        nbins = len(bin_list)
+        data_hist = ROOT.TH1F(f"h_data_{name}_{_uid()}", "data", nbins, 0, nbins)
+        data_hist.SetDirectory(0)
+        data_hist.Sumw2()
+
+        for i, bn in enumerate(resolved, start=1):
+            g = uf[f"{folder}/{bn}/data"]
+            data_hist.SetBinContent(i, float(g.member("fY")[0]))
+            data_hist.SetBinError(i, max(float(g.member("fEYlow")[0]), float(g.member("fEYhigh")[0])))
+
+        mc_histograms = []
+        for proc in self._shape_processes(uf, folder, resolved):
+            hist = ROOT.TH1F(f"h_{proc}_{name}_{_uid()}", proc, nbins, 0, nbins)
+            hist.SetDirectory(0)
+            hist.Sumw2()
+            has_yield = False
+            for i, bn in enumerate(resolved, start=1):
+                path = f"{folder}/{bn}/{proc}"
+                if path not in uf:
+                    continue
+                h = uf[path]
+                value = float(h.values()[0])
+                error = float(h.errors()[0])
+                hist.SetBinContent(i, value)
+                hist.SetBinError(i, error)
+                has_yield = has_yield or value != 0
+            if has_yield:
+                mc_histograms.append((hist, proc))
+
+        if not mc_histograms:
+            raise RuntimeError(f"No per-process MC shapes found in '{folder}'")
+
+        return {"data": data_hist, "mc": mc_histograms}
+
+    def _slice_hist(self, hist, start, length, name):
+        out = ROOT.TH1F(name, hist.GetTitle(), length, 0, length)
+        out.SetDirectory(0)
+        out.Sumw2()
+        for i in range(length):
+            out.SetBinContent(i + 1, hist.GetBinContent(start + i + 1))
+            out.SetBinError(i + 1, hist.GetBinError(start + i + 1))
+        return out
+
+    def _slice_hist_bundle(self, bundle, start, length, name):
+        return {
+            "data": self._slice_hist(bundle["data"], start, length, f"h_data_{name}"),
+            "mc": [(self._slice_hist(h, start, length, f"h_{label}_{name}"), label) for h, label in bundle["mc"]],
+        }
+
+    def _concat_hist_bundles(self, first, second, name):
+        def concat_hist(h1, h2, hname):
+            n1 = h1.GetNbinsX()
+            n2 = h2.GetNbinsX()
+            out = ROOT.TH1F(hname, h1.GetTitle(), n1 + n2, 0, n1 + n2)
+            out.SetDirectory(0)
+            out.Sumw2()
+            for i in range(1, n1 + 1):
+                out.SetBinContent(i, h1.GetBinContent(i))
+                out.SetBinError(i, h1.GetBinError(i))
+            for i in range(1, n2 + 1):
+                out.SetBinContent(n1 + i, h2.GetBinContent(i))
+                out.SetBinError(n1 + i, h2.GetBinError(i))
+            return out
+
+        second_by_label = {label: h for h, label in second["mc"]}
+        mc = []
+        for h1, label in first["mc"]:
+            if label in second_by_label:
+                mc.append((concat_hist(h1, second_by_label[label], f"h_{label}_{name}"), label))
+            else:
+                zero = ROOT.TH1F(f"h_zero_second_{label}_{name}", label, second["data"].GetNbinsX(), 0, second["data"].GetNbinsX())
+                zero.SetDirectory(0)
+                zero.Sumw2()
+                mc.append((concat_hist(h1, zero, f"h_{label}_{name}"), label))
+        for h2, label in second["mc"]:
+            if not any(label == existing for _, existing in mc):
+                zero = ROOT.TH1F(f"h_zero_{label}_{name}", label, first["data"].GetNbinsX(), 0, first["data"].GetNbinsX())
+                zero.SetDirectory(0)
+                zero.Sumw2()
+                mc.append((concat_hist(zero, h2, f"h_{label}_{name}"), label))
+        return {
+            "data": concat_hist(first["data"], second["data"], f"h_data_{name}"),
+            "mc": mc,
+        }
 
     # ── Decoration builders ───────────────────────────────────────────────────
 
@@ -619,10 +954,13 @@ class FitPlotter:
                     current_leaf = leaf
 
                 suf = bin_name[-2:]
+                risr_key = family
+                if family == "MixDel" and not any(t in bin_name for t in ("BHEarly", "BHLate", "NotBH")):
+                    risr_key = "MixDel_STF"
                 bin_labels.append(
-                    COMPRESSED_FINAL_RISR_LABELS.get(family, {}).get(suf, RISR_COMPACT_LABELS.get(suf, suf))
+                    COMPRESSED_FINAL_RISR_LABELS.get(risr_key, {}).get(suf, RISR_COMPACT_LABELS.get(suf, suf))
                 )
-                if ch == sr_ch:
+                if sr_ch and "SR" in bin_name:
                     sr_bins.append(cursor)
                 cursor += 1
                 if cursor > 1:
@@ -656,7 +994,7 @@ class FitPlotter:
             "bin_scheme":          "compressed_final",
             "group_label_text_size": 0.056,
             "sub_group_label_text_size": 0.066,
-            "bin_label_text_size": 0.084,
+            "bin_label_text_size": COMBINED_RISR_BIN_LABEL_SIZE,
             "x_title_text_size": 0.180,
             "sub_group_label_y":    0.42,
             "risr_sequence_y":      0.33,
@@ -699,10 +1037,17 @@ class FitPlotter:
                 return "!BH-"
             if "NotBHLate" in stem:
                 return "!BH+"
+            if "MedIsoEarly" in stem:
+                return "MedIso-"
+            if "MedIsoLate" in stem:
+                return "MedIso+"
+            if "TightIsoEarly" in stem:
+                return "TightIso"
             if "AnchorCR" in stem:
-                return "Anch CR"
+                return "Anchor CR"
             if stem.endswith("CR"):
-                return "#gamma_{d}+SV CR" if family == "MixDel" else "Delayed CR"
+                # shape_transfer buoy bin: has "CR" in name but is the SR-side bin
+                return "#gamma_{d}+SV SR" if family == "MixDel" else "Delayed CR"
             if stem.endswith("SR"):
                 return "#gamma_{d}+SV SR" if family == "MixDel" else "Delayed SR"
 
@@ -734,6 +1079,11 @@ class FitPlotter:
         elif "GeHad" in bin_name:
             channel = "had_sv"
             subgroup = "SR" if "SRGeHad" in grouping_name else "CR"
+        elif "SV" in bin_name and "Pho" in bin_name:
+            # SV + late !BH photon shape transfer (Ch13 low-dxy CR -> Ch14 high-dxy SR).
+            # Checked before the delayed-photon tokens, which these names also contain.
+            channel = "sv_delayed_photon"
+            subgroup = "SR" if re.match(r"Ch\d+SR", grouping_name) else "CR"
         elif any(token in bin_name for token in ("BHEarly", "BHLate", "NotBHEarly", "NotBHLate")):
             channel = "delayed_photon"
             if "NotBHEarly" in bin_name:
@@ -744,6 +1094,14 @@ class FitPlotter:
                 subgroup = "BH-"
             else:
                 subgroup = "BH+"
+        elif any(token in bin_name for token in ("MedIsoEarly", "MedIsoLate", "TightIsoEarly")):
+            channel = "delayed_photon"
+            if "MedIsoEarly" in bin_name:
+                subgroup = "MedIso-"
+            elif "MedIsoLate" in bin_name:
+                subgroup = "MedIso+"
+            else:
+                subgroup = "TightIso"
         elif "eq1Pho" in bin_name:
             channel = "one_prompt"
             subgroup = "tight iso" if "TightIsoPrompt" in grouping_name else "med iso"
@@ -805,7 +1163,7 @@ class FitPlotter:
                     current_subgroup = subgroup
 
                 bin_labels.append(parsed["display_label"])
-                if ch == sr_ch:
+                if sr_ch and "SR" in bin_name:
                     sr_bins.append(cursor)
                 cursor += 1
                 if cursor > 1:
@@ -840,15 +1198,82 @@ class FitPlotter:
             "sr_bins":             sr_bins,
         }
 
-    def _build_abcd_grid_decorations(self, abcd_bin_order, sr_ch=None):
+    def _build_delpho_abcd_decorations(self, ordered_regions, mode, sr_ch=False):
+        bin_labels       = []
+        group_labels     = []
+        sub_group_labels = []
+        separator_bins   = []
+        sub_sep_bins     = []
+        minor_sep_bins   = []
+        sr_bins          = []
+        cursor           = 0
+
+        for idx, (region_label, ch, bins) in enumerate(ordered_regions):
+            start = cursor
+            for bin_name in bins:
+                suffix = _noncompressed_suffix(bin_name)
+                if mode == "compressed":
+                    label = COMPRESSED_FINAL_RISR_LABELS["DelPho"].get(
+                        suffix, RISR_COMPACT_LABELS.get(suffix, suffix)
+                    )
+                else:
+                    label = _noncompressed_mr_label(suffix)
+                bin_labels.append(label)
+                if sr_ch and ("SR" in ch or "SR" in bin_name or "NotBHLate" in ch or "NotBHLate" in bin_name):
+                    sr_bins.append(cursor)
+                cursor += 1
+                if cursor > 1:
+                    minor_sep_bins.append(cursor - 1)
+
+            sub_group_labels.append({"text": region_label, "start": start, "end": cursor})
+            if idx < len(ordered_regions) - 1:
+                sub_sep_bins.append(cursor)
+            if idx in (2, 3):
+                separator_bins.append(cursor)
+
+        group_labels = [
+            {"text": "#gamma_{d}^{BH}", "start": 0, "end": sub_group_labels[2]["end"]},
+            {"text": "", "start": sub_group_labels[3]["start"], "end": sub_group_labels[3]["end"]},
+            {"text": "#gamma_{d}^{iso}", "start": sub_group_labels[4]["start"], "end": cursor},
+        ]
+
+        return {
+            "n_bins":              cursor,
+            "bin_labels":          bin_labels,
+            "group_labels":        group_labels,
+            "sub_group_labels":    sub_group_labels,
+            "sub_group_axis_title": "",
+            "separator_bins":      separator_bins,
+            "sub_sep_bins":        sub_sep_bins,
+            "minor_sep_bins":      minor_sep_bins,
+            "section_labels":      None,
+            "section_separator":   None,
+            "x_axis_title":        "R_{ISR}" if mode == "compressed" else "",
+            "bottom_margin":       0.52,
+            "bin_scheme":          "delpho_abcd",
+            "group_label_text_size": COMBINED_GROUP_LABEL_SIZE,
+            "sub_group_label_text_size": COMBINED_SUBGROUP_LABEL_SIZE,
+            "bin_label_text_size": (
+                COMBINED_RISR_BIN_LABEL_SIZE
+                if mode == "compressed" else COMBINED_MR_BIN_LABEL_SIZE
+            ),
+            "x_title_text_size": 0.160,
+            "sub_group_label_y":    0.42,
+            "sr_bins":             sr_bins,
+        }
+
+    def _build_abcd_grid_decorations(self, abcd_bin_order, sr_ch=None, mode="uncompressed"):
         """
         3-level decoration for the ABCD 2×2 grid layout:
           Level 1 (group_labels):     BH γ  |  Non-BH γ
           Level 2 (sub_group_labels): Early | Late  (within each major group)
-          Level 3 (bin_labels):       Ms-delayed ranges
+          Level 3 (bin_labels):       Ms-delayed ranges (uncompressed) or R_ISR (compressed)
         """
-        bh_chs    = [(ch, b) for ch, b in abcd_bin_order if "notBH" not in ch and "BH" in ch]
-        notbh_chs = [(ch, b) for ch, b in abcd_bin_order if "notBH" in ch]
+        bh_chs    = [(ch, b) for ch, b in abcd_bin_order if "notbh" not in ch.lower() and "bh" in ch.lower()]
+        notbh_chs = [(ch, b) for ch, b in abcd_bin_order if "notbh" in ch.lower()]
+
+        bin_label_table = MS_DELAYED_LABELS if mode == "uncompressed" else RISR_COMPACT_LABELS
+        x_title = "M_{S} [TeV]" if mode == "uncompressed" else "R_{ISR}"
 
         bin_labels       = []
         group_labels     = []
@@ -866,8 +1291,8 @@ class FitPlotter:
                 ch_start = cursor
                 timing   = "Early" if "Early" in ch else "Late"
                 for bin_name in bins:
-                    bin_labels.append(MS_DELAYED_LABELS.get(bin_name[-2:], bin_name[-2:]))
-                    if ch == sr_ch:
+                    bin_labels.append(bin_label_table.get(bin_name[-2:], bin_name[-2:]))
+                    if sr_ch and "SR" in bin_name:
                         sr_bins.append(cursor)
                     cursor += 1
                 sub_group_labels.append({"text": timing, "start": ch_start, "end": cursor})
@@ -887,7 +1312,7 @@ class FitPlotter:
             "sub_sep_bins":     sub_sep_bins,
             "section_labels":      None,
             "section_separator":   None,
-            "x_axis_title":        "M_{S} [TeV]",
+            "x_axis_title":        x_title,
             "sub_group_axis_title": "",
             "bottom_margin":       0.52,
             "sr_bins":             sr_bins,
@@ -895,12 +1320,23 @@ class FitPlotter:
 
     def _build_combined_decorations(self, abcd_bin_order, shape_bin_order, sr_ch=None,
                                     shape_bin_scheme="msrs", abcd_bin_scheme="ms_delayed",
-                                    label_scheme="auto"):
+                                    label_scheme="auto", delpho_abcd_regions=None, mode="uncompressed"):
         """
         Combined ABCD + shape_transfer decorations with section labels and
         a heavy separator between the two fit components.
         ABCD bins come first, shape_transfer second.
         """
+        if delpho_abcd_regions:
+            abcd_deco = self._build_delpho_abcd_decorations(delpho_abcd_regions, mode, sr_ch=sr_ch)
+            if label_scheme == "compressed-final":
+                shape_deco = self._build_compressed_final_decorations(shape_bin_order, sr_ch=sr_ch)
+            elif label_scheme == "noncompressed-final":
+                shape_deco = self._build_noncompressed_final_decorations(shape_bin_order, sr_ch=sr_ch)
+            else:
+                shape_bl_map = RISR_COMPACT_LABELS if shape_bin_scheme == "risr" else None
+                shape_deco = self._build_decorations(shape_bin_order, shape_bin_scheme, COMBINED_CHANNEL_LABELS, shape_bl_map)
+            return self._merge_combined_decorations(abcd_deco, shape_deco, shape_bin_scheme)
+
         if label_scheme == "compressed-final":
             return self._build_compressed_final_decorations(abcd_bin_order + shape_bin_order, sr_ch=sr_ch)
         if label_scheme == "noncompressed-final":
@@ -923,27 +1359,11 @@ class FitPlotter:
 
         sr_bins = []
         if sr_ch:
-            for gl, (ch, _) in zip(abcd_deco["group_labels"], abcd_bin_order):
-                if ch == sr_ch:
+            for gl, (ch, bins) in zip(abcd_deco["group_labels"], abcd_bin_order):
+                if any("SR" in b for b in bins):
                     sr_bins.extend(range(gl["start"], gl["end"]))
 
-        if shape_bin_scheme == "risr":
-            glossary = [
-                ("R_{ISR}^{lo}",  "[0.4, 0.6)"),
-                ("R_{ISR}^{med}", "[0.6, 0.75)"),
-                ("R_{ISR}^{hi}",  "#geq 0.75"),
-                ("R_{ISR}^{hi-}", "[0.75, 0.9)"),
-                ("R_{ISR}^{hi+}", "#geq 0.9"),
-            ]
-        else:
-            glossary = [
-                ("M_{S}^{CR,-}", "[0.7, 1) TeV"),
-                ("M_{S}^{CR,+}", "#geq 1 TeV"),
-                ("M_{S}^{SR,-}", "[1, 1.5) TeV"),
-                ("M_{S}^{SR,+}", "#geq 1.5 TeV"),
-                ("R_{S}^{-}",    "[0.15, 0.2)"),
-                ("R_{S}^{+}",    "#geq 0.2"),
-            ]
+        glossary = self._combined_glossary(shape_bin_scheme)
 
         return {
             "n_bins":      n_total,
@@ -964,10 +1384,340 @@ class FitPlotter:
             "abcd_annotation": abcd_annotation,
         }
 
+    def _combined_glossary(self, shape_bin_scheme):
+        if shape_bin_scheme == "risr":
+            return [
+                ("R_{ISR}^{lo}",  "[0.4, 0.6)"),
+                ("R_{ISR}^{med}", "[0.6, 0.75)"),
+                ("R_{ISR}^{hi}",  "#geq 0.75"),
+                ("R_{ISR}^{hi-}", "[0.75, 0.9)"),
+                ("R_{ISR}^{hi+}", "#geq 0.9"),
+            ]
+        return [
+            ("M_{S}^{CR,-}", "[0.7, 1) TeV"),
+            ("M_{S}^{CR,+}", "#geq 1 TeV"),
+            ("M_{S}^{SR,-}", "[1, 1.5) TeV"),
+            ("M_{S}^{SR,+}", "#geq 1.5 TeV"),
+            ("R_{S}^{-}",    "[0.15, 0.2)"),
+            ("R_{S}^{+}",    "#geq 0.2"),
+        ]
+
+    def _merge_combined_decorations(self, abcd_deco, shape_deco, shape_bin_scheme):
+        n_abcd = abcd_deco["n_bins"]
+        n_total = n_abcd + shape_deco["n_bins"]
+
+        def _offset(lst, off):
+            return [{"text": g["text"], "start": g["start"] + off, "end": g["end"] + off}
+                    for g in lst] if lst else []
+
+        return {
+            "n_bins":      n_total,
+            "bin_labels":  abcd_deco["bin_labels"] + shape_deco["bin_labels"],
+            "bin_label_text_sizes": (
+                [COMBINED_RISR_BIN_LABEL_SIZE] * n_total
+                if shape_bin_scheme == "risr"
+                else [COMBINED_MR_BIN_LABEL_SIZE] * n_total
+            ),
+            "group_labels": (abcd_deco["group_labels"]
+                             + _offset(shape_deco["group_labels"], n_abcd)),
+            "sub_group_labels": ((abcd_deco.get("sub_group_labels") or [])
+                                 + _offset(shape_deco.get("sub_group_labels") or [], n_abcd)) or None,
+            "sub_group_axis_title": "",
+            "separator_bins": ((abcd_deco.get("separator_bins") or [])
+                               + [s + n_abcd for s in shape_deco.get("separator_bins") or []]),
+            "sub_sep_bins": ((abcd_deco.get("sub_sep_bins") or [])
+                             + [s + n_abcd for s in shape_deco.get("sub_sep_bins") or []]),
+            "minor_sep_bins": ((abcd_deco.get("minor_sep_bins") or [])
+                               + [s + n_abcd for s in shape_deco.get("minor_sep_bins") or []]),
+            "section_labels":    None,
+            "section_separator": n_abcd,
+            "x_axis_title":  "",
+            "bottom_margin": max(abcd_deco.get("bottom_margin", 0.52), shape_deco.get("bottom_margin", 0.52)),
+            "sr_bins":       ((abcd_deco.get("sr_bins") or [])
+                              + [s + n_abcd for s in shape_deco.get("sr_bins") or []]),
+            "glossary":      shape_deco.get("glossary") or self._combined_glossary(shape_bin_scheme),
+            **{k: shape_deco[k] for k in ("glossary_text_size", "glossary_y0", "glossary_line_spacing")
+               if k in shape_deco},
+            "bin_scheme":    "delpho_abcd_combined",
+            "group_label_text_size": COMBINED_GROUP_LABEL_SIZE,
+            "sub_group_label_text_size": COMBINED_SUBGROUP_LABEL_SIZE,
+            "bin_label_text_size": (
+                COMBINED_RISR_BIN_LABEL_SIZE
+                if shape_bin_scheme == "risr"
+                else COMBINED_MR_BIN_LABEL_SIZE
+            ),
+            "x_title_text_size": abcd_deco.get("x_title_text_size", 0.160),
+            "sub_group_label_y": abcd_deco.get("sub_group_label_y", 0.42),
+        }
+
     # ── Canvas drawing: standard ──────────────────────────────────────────────
 
+    def _draw_datamc_canvas(self, hist_bundle, deco, name, title, right_panel=False):
+        n      = deco["n_bins"]
+        bot_m  = deco.get("bottom_margin", 0.38)
+        left_m = 0.10
+        right_m = 0.16 if right_panel else 0.04
+        split   = 0.30
+        has_sub  = bool(deco.get("sub_group_labels"))
+        has_sect = bool(deco.get("section_labels"))
+
+        cw = max(1200, min(80 * n, 2400))
+        self.datamc_plotter._ensure_mc_colors()
+        canvas = ROOT.TCanvas(f"c_{name}", title, cw, 700)
+        canvas.SetFillColor(0)
+
+        pad1 = ROOT.TPad(f"p1_{name}", "main",  0, split, 1, 1)
+        pad1.SetBottomMargin(0.02)
+        pad1.SetTopMargin(0.17 if has_sect else 0.13)
+        pad1.SetLeftMargin(left_m); pad1.SetRightMargin(right_m)
+        pad1.SetTicks(1, 1)
+        pad1.SetLogy(True); pad1.SetGridx(True); pad1.Draw()
+
+        pad2 = ROOT.TPad(f"p2_{name}", "ratio", 0, 0, 1, split)
+        pad2.SetTopMargin(0.02); pad2.SetBottomMargin(bot_m)
+        pad2.SetLeftMargin(left_m); pad2.SetRightMargin(right_m)
+        pad2.SetTicks(1, 1)
+        pad2.SetGridx(True); pad2.SetGridy(True); pad2.Draw()
+
+        pad1.cd()
+        data_hist = hist_bundle["data"].Clone(f"h_data_{name}")
+        data_hist.SetDirectory(0)
+        data_hist.SetMarkerStyle(20)
+        data_hist.SetMarkerSize(1.2)
+        data_hist.SetMarkerColor(ROOT.kBlack)
+        data_hist.SetLineColor(ROOT.kBlack)
+        data_hist.SetLineWidth(2)
+        data_hist.SetStats(0)
+
+        mc_histograms = []
+        for hist, label in hist_bundle["mc"]:
+            h = hist.Clone(f"{hist.GetName()}_{name}")
+            h.SetDirectory(0)
+            datamc_label = _datamc_background_key(label)
+            h.SetFillColor(self.datamc_plotter._get_background_color_index(datamc_label))
+            h.SetLineColor(ROOT.kBlack)
+            h.SetLineWidth(1)
+            h.SetStats(0)
+            mc_histograms.append((h, self.datamc_plotter._clean_mc_label(datamc_label)))
+        mc_histograms.sort(key=lambda item: item[0].Integral())
+
+        total_mc_hist = data_hist.Clone(f"total_mc_{name}")
+        total_mc_hist.Reset()
+        for h, _ in mc_histograms:
+            total_mc_hist.Add(h)
+
+        h_ratio = ROOT.TH1F(f"hr_{name}", "", n, 0, n)
+        h_ratio.SetDirectory(0)
+        h_rband = ROOT.TH1F(f"hrb_{name}", "", n, 0, n)
+        h_rband.SetDirectory(0)
+        for i in range(n):
+            data = data_hist.GetBinContent(i + 1)
+            data_err = data_hist.GetBinError(i + 1)
+            bkg = total_mc_hist.GetBinContent(i + 1)
+            bkg_err = total_mc_hist.GetBinError(i + 1)
+            h_ratio.SetBinContent(i + 1, data / bkg if bkg > 0 else 0)
+            h_ratio.SetBinError(i + 1, data_err / bkg if bkg > 0 else 0)
+            h_rband.SetBinContent(i + 1, 1.0)
+            h_rband.SetBinError(i + 1, bkg_err / bkg if bkg > 0 else 0)
+        h_rband.SetFillColor(ROOT.kGray + 1)
+        h_rband.SetFillStyle(3345)
+        h_rband.SetMarkerSize(0)
+        h_rband.SetLineColor(0)
+
+        stack = ROOT.THStack(f"stack_{name}", "")
+        for h, _ in mc_histograms:
+            stack.Add(h)
+
+        stack.Draw("HIST")
+        pos_vals = []
+        for i in range(n):
+            bkg = total_mc_hist.GetBinContent(i + 1)
+            bkg_err = total_mc_hist.GetBinError(i + 1)
+            data = data_hist.GetBinContent(i + 1)
+            data_err = data_hist.GetBinError(i + 1)
+            if bkg > 0:
+                pos_vals.append(bkg)
+            if data > 0:
+                pos_vals.append(data)
+        pos_vals = np.array(pos_vals)
+        min_v = max(0.5, 0.3 * pos_vals.min()) if pos_vals.size else 0.5
+        max_v = max(
+            max((total_mc_hist.GetBinContent(i + 1) + total_mc_hist.GetBinError(i + 1)) for i in range(n)),
+            max((data_hist.GetBinContent(i + 1) + data_hist.GetBinError(i + 1)) for i in range(n)),
+            1.0,
+        )
+        stack.SetMinimum(min_v)
+        stack.SetMaximum(max_v * 10.0)
+        stack.GetHistogram().GetYaxis().SetRangeUser(min_v, max_v * 10.0)
+        stack.GetXaxis().SetLabelSize(0)
+        stack.GetXaxis().SetTickLength(0.015)
+        stack.GetXaxis().SetNdivisions(n, 0, 0, False)
+        stack.GetYaxis().SetTitle("Events / bin")
+        stack.GetYaxis().SetTitleSize(0.075)
+        stack.GetYaxis().SetTitleOffset(0.65)
+        stack.GetYaxis().SetLabelSize(0.065)
+        stack.GetYaxis().SetTickLength(0.015)
+        stack.GetYaxis().CenterTitle(True)
+
+        mc_uncertainty = self.datamc_plotter._create_mc_uncertainty_band(mc_histograms)
+        if mc_uncertainty:
+            mc_uncertainty.Draw("E2 SAME")
+        data_hist.Draw("PEX0 SAME")
+
+        rp = 1.0 - right_m
+        if right_panel:
+            legend = self.datamc_plotter._create_standard_legend(
+                data_hist, mc_uncertainty, mc_histograms,
+                x1=rp + 0.01, x2=0.995, y1=0.62, y2=0.88, text_size=0.038
+            )
+        else:
+            legend = self.datamc_plotter._create_standard_legend(
+                data_hist, mc_uncertainty, mc_histograms,
+                x1=0.77, x2=1.0, y1=0.36, y2=0.76, text_size=0.045
+            )
+        legend.Draw()
+
+        rp_objs = []
+        if right_panel:
+            defs = deco.get("glossary", [])
+            if defs:
+                lt_key = ROOT.TLatex()
+                lt_key.SetNDC(True)
+                lt_key.SetTextFont(42)
+                lt_key.SetTextSize(deco.get("glossary_text_size", 0.034 if len(defs) > 10 else 0.052))
+                lt_key.SetTextAlign(12)
+                y_key = deco.get("datamc_glossary_y0", 0.58 if len(defs) > 4 else 0.52)
+                dy = deco.get(
+                    "datamc_glossary_line_spacing",
+                    0.035 if len(defs) > 4 else deco.get("glossary_line_spacing", 0.075),
+                )
+                for sym, rng in defs:
+                    if isinstance(rng, tuple):
+                        lt_key.DrawLatex(rp + 0.01, y_key, f"{sym}  :")
+                        for line in rng:
+                            y_key -= dy
+                            lt_key.DrawLatex(rp + 0.022, y_key, line)
+                        y_key -= dy
+                    else:
+                        lt_key.DrawLatex(rp + 0.01, y_key, f"{sym}  :  {rng}")
+                        y_key -= dy
+                rp_objs.append(lt_key)
+
+        if right_panel:
+            self.style.draw_cms_labels(
+                cms_x=0.10, cms_y=0.89, prelim_str="Preliminary",
+                prelim_x=0.175, lumi_x=0.84, cms_text_size_mult=1.92
+            )
+        else:
+            self.style.draw_cms_labels(
+                cms_x=0.10, cms_y=0.89, prelim_str="Preliminary",
+                prelim_x=0.185, lumi_x=0.96, cms_text_size_mult=1.92
+            )
+
+        sect_objs = []
+        if has_sect:
+            dw  = 1.0 - left_m - right_m
+            slt = ROOT.TLatex()
+            slt.SetNDC(True)
+            slt.SetTextFont(62)
+            slt.SetTextSize(0.065)
+            slt.SetTextAlign(22)
+            for sl in deco["section_labels"]:
+                cx    = (sl["start"] + sl["end"]) / 2.0
+                x_ndc = left_m + (cx / n) * dw
+                slt.DrawLatex(x_ndc, 0.88, sl["text"])
+            sect_objs.append(slt)
+
+        grp_y    = 0.72 if has_sect else 0.77
+        grp_objs = self._draw_group_labels(pad1, deco, left_m, right_m, grp_y)
+
+        pad2.cd()
+        h_ratio.SetMaximum(1.99)
+        h_ratio.SetMinimum(0.0)
+        h_ratio.GetYaxis().SetTitle("")
+        h_ratio.GetYaxis().SetLabelSize(0.15)
+        h_ratio.GetYaxis().SetNdivisions(504)
+        h_ratio.GetYaxis().SetTickLength(0.015)
+        h_ratio.GetXaxis().SetLabelSize(0)
+        h_ratio.GetXaxis().SetTickLength(0.015)
+        h_ratio.GetXaxis().SetNdivisions(n, 0, 0, False)
+        h_ratio.SetMarkerStyle(20)
+        h_ratio.SetMarkerSize(1.0)
+        h_ratio.SetLineColor(ROOT.kBlack)
+        h_ratio.SetStats(0)
+        h_ratio.Draw("PE")
+        h_rband.Draw("E2 SAME")
+        h_ratio.Draw("PE SAME")
+
+        unity = ROOT.TLine(0, 1, n, 1)
+        unity.SetLineColor(ROOT.kRed)
+        unity.SetLineWidth(2)
+        unity.SetLineStyle(2)
+        unity.Draw()
+
+        rtitle = ROOT.TLatex()
+        rtitle.SetNDC(True)
+        rtitle.SetTextFont(42)
+        rtitle.SetTextSize(0.16)
+        rtitle.SetTextAlign(22)
+        rtitle.SetTextAngle(90)
+        rtitle.DrawLatex(0.025, 0.65, "Data / MC")
+
+        sg_objs = self._draw_sub_group_labels(pad2, deco, left_m, right_m) if has_sub else []
+        abcd_y_off = 0.07 if deco.get("section_separator") is not None else 0.0
+        bl_objs = self._draw_bin_labels(pad2, deco, left_m, right_m, has_sub, abcd_y_off)
+        sep_objs = self._draw_separators(canvas, deco, left_m, right_m, name)
+
+        canvas.Modified()
+        canvas.Update()
+        canvas.pad1 = pad1
+        canvas.pad2 = pad2
+        canvas.stack = stack
+        canvas.data_hist = data_hist
+        canvas.mc_histograms = mc_histograms
+        canvas.mc_uncertainty = mc_uncertainty
+        canvas.legend = legend
+        canvas.ratio_hist = h_ratio
+        canvas.total_mc_hist = total_mc_hist
+        canvas.mc_ratio_uncertainty = h_rband
+        canvas.line = unity
+        canvas._keep = [
+            pad1, pad2, stack, data_hist, mc_histograms, total_mc_hist,
+            mc_uncertainty, legend, h_ratio, h_rband, unity, rtitle,
+            grp_objs, sg_objs, bl_objs, sep_objs, sect_objs, rp_objs,
+        ]
+        return canvas
+
+    def _signal_hists(self, signals, n, name):
+        """[(label, values)] -> [(TH1F line, label)], one colour/style per signal."""
+        out = []
+        for k, (label, vals) in enumerate(signals or []):
+            color, offset, style = SIGNAL_STYLES[k % len(SIGNAL_STYLES)]
+            h = ROOT.TH1F(f"hsig{k}_{name}", "", n, 0, n)
+            h.SetDirectory(0)
+            for i in range(n):
+                h.SetBinContent(i + 1, vals[i])
+            h.SetLineColor(getattr(ROOT, color) + offset); h.SetLineStyle(style); h.SetLineWidth(3)
+            h.SetFillStyle(0); h.SetStats(0)
+            out.append((h, label))
+        return out
+
+    @staticmethod
+    def _y_range(bkg_vals, bkg_errs, data_y, data_eyh, signals):
+        """Log-y range.  Without signals: unchanged (floor 0.5).  With signals the
+        floor drops to 0.01 so small signal yields stay visible; SMALL-valued
+        (1e-8) placeholder bins still do not set the scale."""
+        vals = [bkg_vals, data_y] + [v for _, v in signals or []]
+        pos = np.concatenate(vals)
+        pos = pos[pos > 0]
+        floor = 0.01 if signals else 0.5
+        min_v = max(floor, 0.3 * pos.min()) if pos.size else floor
+        max_v = max([float((bkg_vals + bkg_errs).max()), float((data_y + data_eyh).max())]
+                    + [float(v.max()) for _, v in signals or []])
+        return min_v, max_v
+
     def _draw_standard_canvas(self, bkg_vals, bkg_errs, data_y, data_eyl, data_eyh,
-                               deco, name, title, right_panel=False):
+                               deco, name, title, right_panel=False, signals=None):
         n      = deco["n_bins"]
         bot_m  = deco.get("bottom_margin", 0.38)
         left_m = 0.10
@@ -1032,12 +1782,9 @@ class FitPlotter:
 
         # ── main pad ──────────────────────────────────────────────────────────
         pad1.cd()
-        pos_vals = np.concatenate([bkg_vals, data_y])
-        pos_vals = pos_vals[pos_vals > 0]
-        min_v = max(0.5, 0.3 * pos_vals.min()) if pos_vals.size else 0.5
-        max_v = max(float((bkg_vals + bkg_errs).max()),
-                    float((data_y   + data_eyh).max()))
+        min_v, max_v = self._y_range(bkg_vals, bkg_errs, data_y, data_eyh, signals)
         h_bkg.SetMinimum(min_v); h_bkg.SetMaximum(max_v * 10.0)
+        h_sigs = self._signal_hists(signals, n, name)
 
         h_bkg.GetYaxis().SetTitle("Events / bin")
         h_bkg.GetYaxis().SetTitleSize(0.075); h_bkg.GetYaxis().SetTitleOffset(0.65)
@@ -1060,20 +1807,26 @@ class FitPlotter:
         if h_sr:
             h_sr.Draw("HIST SAME")
         h_bkg_err.Draw("E2 SAME")
+        for h, _ in h_sigs:
+            h.Draw("HIST SAME")
         g_data.Draw("PZ SAME")
 
         rp = 1.0 - right_m  # left edge of right-margin panel in pad1 NDC
+        # Each signal adds one entry below the existing box.
+        n_extra = len(h_sigs)
         if right_panel and deco.get("bin_scheme") == "noncompressed_final":
-            leg = ROOT.TLegend(rp + 0.01, 0.75, 0.995, 0.87)
+            leg = ROOT.TLegend(rp + 0.01, 0.75 - 0.06 * n_extra, 0.995, 0.87)
         elif right_panel:
-            leg = ROOT.TLegend(rp + 0.01, 0.72, 0.995, 0.87)
+            leg = ROOT.TLegend(rp + 0.01, 0.72 - 0.06 * n_extra, 0.995, 0.87)
         else:
-            leg = ROOT.TLegend(0.77, 0.42, 1., 0.7)
+            leg = ROOT.TLegend(0.77, 0.42 - 0.07 * n_extra, 1., 0.7)
         leg.SetBorderSize(0); leg.SetFillStyle(0); leg.SetTextSize(0.055)
         leg.AddEntry(g_data,   "Data",         "lp")
         leg.AddEntry(h_bkg,    f"{title} bkg", "F")
         if h_sr:
             leg.AddEntry(h_sr, "Pred. SR",     "F")
+        for h, label in h_sigs:
+            leg.AddEntry(h, label, "l")
         leg.Draw()
 
         rp_objs = []
@@ -1086,24 +1839,38 @@ class FitPlotter:
                 ("R_{S}^{-}",    "[0.15, 0.2)"),
                 ("R_{S}^{+}",    "#geq 0.2"),
             ])
+            size = deco.get("glossary_text_size", 0.034 if len(defs) > 10 else 0.052)
+            # GetY1(), not GetY1NDC(): the NDC copy is only filled when the legend is painted
+            y0 = min(deco.get("glossary_y0", 0.6), leg.GetY1() - 0.04)
+            dy = deco.get("glossary_line_spacing", 0.040 if len(defs) > 10 else 0.075)
+            # Drawn on the canvas (pad1 NDC -> canvas NDC) so a long glossary can
+            # continue into the empty right strip beside the ratio pad; squeezed
+            # to fit above the canvas bottom if it is still too long.
+            h1 = 1.0 - split
+            y_c, dy_c, size_c = split + y0 * h1, dy * h1, size * h1
+            n_lines = sum(1 + len(rng) if isinstance(rng, tuple) else 1 for _, rng in defs)
+            y_bottom = 0.03
+            if n_lines > 1 and y_c - (n_lines - 1) * dy_c < y_bottom:
+                dy_c = (y_c - y_bottom) / (n_lines - 1)
+                size_c = min(size_c, 0.85 * dy_c)
+            canvas.cd()
             lt_key = ROOT.TLatex(); lt_key.SetNDC(True)
             lt_key.SetTextFont(42)
-            lt_key.SetTextSize(deco.get("glossary_text_size", 0.034 if len(defs) > 10 else 0.052))
+            lt_key.SetTextSize(size_c)
             lt_key.SetTextAlign(12)
-            y0 = deco.get("glossary_y0", 0.6)
-            dy = deco.get("glossary_line_spacing", 0.040 if len(defs) > 10 else 0.075)
-            y_key = y0
+            y_key = y_c
             for sym, rng in defs:
                 if isinstance(rng, tuple):
                     lt_key.DrawLatex(rp + 0.01, y_key, f"{sym}  :")
                     for line in rng:
-                        y_key -= dy
+                        y_key -= dy_c
                         lt_key.DrawLatex(rp + 0.022, y_key, line)
-                    y_key -= dy
+                    y_key -= dy_c
                 else:
                     lt_key.DrawLatex(rp + 0.01, y_key, f"{sym}  :  {rng}")
-                    y_key -= dy
+                    y_key -= dy_c
             rp_objs.append(lt_key)
+            pad1.cd()
 
         if right_panel:
             self.style.draw_cms_labels(
@@ -1160,7 +1927,7 @@ class FitPlotter:
 
         canvas.Modified(); canvas.Update()
         canvas._keep = [h_bkg, h_sr, h_bkg_err, g_data, h_ratio, h_rband, unity, leg,
-                        rtitle, grp_objs, sg_objs, bl_objs, sep_objs, sect_objs, rp_objs]
+                        rtitle, grp_objs, sg_objs, bl_objs, sep_objs, sect_objs, rp_objs, h_sigs]
         return canvas
 
     # ── Canvas drawing: side-by-side ──────────────────────────────────────────
@@ -1168,7 +1935,7 @@ class FitPlotter:
     def _draw_sidebyside_canvas(self,
                                  a_bkg, a_berr, a_data, a_eyl, a_eyh,
                                  b_bkg, b_berr, b_data, b_eyl, b_eyh,
-                                 a_deco, b_deco, name, title):
+                                 a_deco, b_deco, name, title, a_signals=None, b_signals=None):
         split    = 0.30
         mid      = 0.50
         lm_l, lm_r = 0.14, 0.08
@@ -1200,9 +1967,9 @@ class FitPlotter:
 
         keep = []
 
-        for side, (bkg, berr, data, eyl, eyh, deco, pm, pr, lm, is_r) in enumerate([
-            (a_bkg, a_berr, a_data, a_eyl, a_eyh, a_deco, pML, pRL, lm_l, False),
-            (b_bkg, b_berr, b_data, b_eyl, b_eyh, b_deco, pMR, pRR, lm_r, True),
+        for side, (bkg, berr, data, eyl, eyh, deco, pm, pr, lm, is_r, sigs) in enumerate([
+            (a_bkg, a_berr, a_data, a_eyl, a_eyh, a_deco, pML, pRL, lm_l, False, a_signals),
+            (b_bkg, b_berr, b_data, b_eyl, b_eyh, b_deco, pMR, pRR, lm_r, True,  b_signals),
         ]):
             nb = deco["n_bins"]
             has_sub = bool(deco.get("sub_group_labels"))
@@ -1243,10 +2010,9 @@ class FitPlotter:
 
             # Main pad
             pm.cd()
-            pv = np.concatenate([bkg, data]); pv = pv[pv > 0]
-            min_v = max(0.5, 0.3 * pv.min()) if pv.size else 0.5
-            max_v = max(float((bkg + berr).max()), float((data + eyh).max()))
+            min_v, max_v = self._y_range(bkg, berr, data, eyh, sigs)
             h_bkg.SetMinimum(min_v); h_bkg.SetMaximum(max_v * 10.0)
+            h_sigs = self._signal_hists(sigs, nb, f"{name}_{side}")
             h_bkg.GetYaxis().SetLabelSize(0.08)
             if not is_r:
                 h_bkg.GetYaxis().SetTitle("Events / bin")
@@ -1258,13 +2024,17 @@ class FitPlotter:
             h_bkg.GetXaxis().SetNdivisions(nb, 0, 0, False)
             h_bkg.Draw("HIST")
             h_bkg_err.Draw("E2 SAME")
+            for h, _ in h_sigs:
+                h.Draw("HIST SAME")
             g_data.Draw("PZ SAME")
 
             if not is_r:
-                leg = ROOT.TLegend(0.57, 0.47, 0.98, 0.74)
+                leg = ROOT.TLegend(0.57, 0.47 - 0.09 * len(h_sigs), 0.98, 0.74)
                 leg.SetBorderSize(0); leg.SetFillStyle(0); leg.SetTextSize(0.07)
                 leg.AddEntry(g_data,    "Data",         "lp")
                 leg.AddEntry(h_bkg,     f"{title} bkg", "F")
+                for h, label in h_sigs:
+                    leg.AddEntry(h, label, "l")
                 leg.Draw(); keep.append(leg)
 
             grp = self._draw_group_labels(pm, deco, lm, rm, 0.83)
@@ -1316,7 +2086,7 @@ class FitPlotter:
                         sl.DrawLine(x, y_low, x, 0.95)
                         sub_lines.append(sl)
 
-            keep.extend([h_bkg, h_bkg_err, g_data, h_ratio, h_rband, unity, grp, sg, bl, sub_lines])
+            keep.extend([h_bkg, h_bkg_err, g_data, h_ratio, h_rband, unity, grp, sg, bl, sub_lines, h_sigs])
 
         # CMS labels on full-canvas overlay
         canvas.cd()
@@ -1419,12 +2189,20 @@ class FitPlotter:
             lt.SetTextAlign(12)  # left end at bin left-edge, text slopes down-right into margin
         else:
             lt.SetTextAlign(22)
+        bin_label_text_sizes = deco.get("bin_label_text_sizes")
         for i, label in enumerate(deco["bin_labels"]):
+            if bin_label_text_sizes:
+                lt.SetTextSize(bin_label_text_sizes[i])
             if is_risr:
                 x = left_m + (i / n) * dw          # left edge of bin
             else:
                 x = left_m + ((i + 0.5) / n) * dw  # centre of bin
-            y = y_bin + (0.04 if is_risr else 0.0) + (abcd_y_offset if sect_sep is not None and i < sect_sep else 0.0)
+            use_abcd_label_offset = (
+                sect_sep is not None
+                and i < sect_sep
+                and deco.get("bin_scheme") != "delpho_abcd_combined"
+            )
+            y = y_bin + (0.04 if is_risr else 0.0) + (abcd_y_offset if use_abcd_label_offset else 0.0)
             if is_compressed_final:
                 y = 0.25
             lt.DrawLatex(x, y, label)
