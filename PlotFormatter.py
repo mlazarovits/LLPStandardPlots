@@ -18,7 +18,7 @@ def get_signal_label(inlabel):
     mn1 = inlabel[inlabel.find("mN1")+3:inlabel.find("ct")]
     ct = inlabel[inlabel.find("ct")+2:]
     ct = ct.replace("p",".")
-    ct = str(float(ct)*100)
+    ct = str(int(float(ct)*100))
     return f"m_{{#tilde{{g}}}}({mgl})-m_{{#tilde{{#chi}}_{{2}}^{{0}}}}({mn2})-m_{{#tilde{{#chi}}_{{1}}^{{0}}}}({mn1}), c#tau={ct} cm"
 
 
@@ -94,6 +94,7 @@ class PlotFormatHelper:
             "METPD" : "MET PD Run II",
             "METFullRunII" : "MET PD Run II",
             "METFullRunIIRunIII" : "data",
+            "METPDRunFullBranches" : "data",
             "MET18" : "MET PD 2018",
             "MET17" : "MET PD 2017",
             "MET16" : "MET PD 2016",
@@ -543,6 +544,11 @@ class PlotFormatter():
         # Sort MC histograms by yield (ascending order)
         hists.sort(key=lambda x: x.GetMaximum(), reverse=True)
         self._plotter1d.setup_axes(hists[0], x_label, normalized=normalize)
+        if normalize:
+            if not logy:
+                        hists[0].GetYaxis().SetRangeUser(0,hists[0].GetMaximum()+0.1)
+            else:
+                        hists[0].GetYaxis().SetRangeUser(1e-4,hists[0].GetMaximum()*10)
         hists[0].Draw("HIST")
         for hist in hists[1:]:
             hist.Draw("HIST SAME")
