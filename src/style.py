@@ -211,8 +211,8 @@ class StyleManager:
         lumi_label.SetTextFont(42)
         lumi_label.SetTextAlign(31)  # Right-aligned
         # Format luminosity without decimal if it's a whole number
-        lumi_text = f"{self.luminosity:g}" if self.luminosity == int(self.luminosity) else f"{self.luminosity}"
-        if self.luminosity > 0:
+        if self.luminosity is not None:
+            lumi_text = f"{self.luminosity:g}" if self.luminosity == int(self.luminosity) else f"{self.luminosity}"
             lumi_label.DrawLatex(lumi_x, lumi_y, f"{lumi_text} fb^{{-1}} ({self.energy} TeV)")
         else:
             lumi_label.DrawLatex(lumi_x, lumi_y, f"({self.energy} TeV)")
