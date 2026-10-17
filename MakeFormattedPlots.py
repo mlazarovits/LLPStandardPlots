@@ -60,11 +60,11 @@ OBS_CONFIG = {
     },
     "baseLinePhotonPtIsoScore": {
         "dimension": "2d",
-        "xlabel": "Baseline Photon $p_T$ [GeV]",
+        "xlabel": "Baseline Photon p_{T} [GeV]",
         "ylabel": "Baseline Photon Isolation Score",
         "xmin": 0.,
         "xmax": 600.,
-        "ymin": 0.0,
+        "ymin": 0.15,
         "ymax": 1.01,
     },
 }
