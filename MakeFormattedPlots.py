@@ -58,6 +58,15 @@ OBS_CONFIG = {
         "ymin": 0.0,
         "ymax": 1.0,
     },
+    "baseLinePhotonPtIsoScore": {
+        "dimension": "2d",
+        "xlabel": "Baseline Photon $p_T$ [GeV]",
+        "ylabel": "Baseline Photon Isolation Score",
+        "xmin": 0.,
+        "xmax": 600.,
+        "ymin": 0.0,
+        "ymax": 1.01,
+    },
 }
 
 
@@ -323,7 +332,7 @@ def make_2d_plot(formatter, helper, entries, normalize=False):
     except Exception:
         global_label = ""
 
-    canvas_name = "2d_" + safe_name(f"{obs}_{process}_{region}")
+    canvas_name = safe_name(f"{obs}_{process}_{region}")+"_2d"
 
     canvas = formatter.format_2d_hist(
         canvas_name,
